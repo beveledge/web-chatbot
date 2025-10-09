@@ -1,92 +1,115 @@
 // api/chat.js
-// Serverless-funktion för Vercel (Node.js 18/20, ES Modules)
+import { kv } from '@vercel/kv';
+import OpenAI from 'openai';
 
-import OpenAI from "openai";
+// överst i filen, under imports
+const ALLOWED_ORIGINS = [
+  'https://webbyrasigtuna.se',
+  /\.webbyrasigtuna\.se$/ // matchar valfri subdomän, t.ex. kundportal.webbyrasigtuna.se
+];
 
-/* -------------------- CORS (apex + alla subdomäner, ej www) -------------------- */
-const allowedExact = new Set([
-  "https://webbyrasigtuna.se",
-  // Lokal utveckling — ta gärna bort i prod:
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-]);
-
-// Tillåt alla subdomäner *.webbyrasigtuna.se, men blockera www.webbyrasigtuna.se
-const allowedSubdomain = /^https:\/\/(?!www\.)[a-z0-9-]+\.webbyrasigtuna\.se$/i;
-
-function setCors(req, res) {
-  const origin = req.headers.origin || "";
-  const isAllowed = allowedExact.has(origin) || allowedSubdomain.test(origin);
-
-  if (isAllowed) {
-    // Eko tillbaka EXAKT origin (wildcards funkar inte i browsers)
-    res.setHeader("Access-Control-Allow-Origin", origin);
+function isAllowedOrigin(origin = '') {
+  try {
+    const { origin: o } = new URL(origin);
+    return ALLOWED_ORIGINS.some((rule) =>
+      typeof rule === 'string' ? rule === o : rule.test(o)
+    );
+  } catch {
+    return false;
   }
-  // Hjälper CDN/cache att skilja på origins
-  res.setHeader("Vary", "Origin");
-
-  // Metoder & headers vi accepterar
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
-/* ------------------------------------------------------------------------------ */
+
+// i din handler – allra först:
+if (req.method === 'OPTIONS') {
+  const origin = req.headers.origin || '';
+  if (isAllowedOrigin(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    return res.status(204).end();
+  }
+  return res.status(403).end();
+}
+
+// för POST-svaret – innan du skickar JSON:
+const origin = req.headers.origin || '';
+if (isAllowedOrigin(origin)) {
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+}
 
 export default async function handler(req, res) {
-  setCors(req, res);
-
-  // Preflight för CORS
-  if (req.method === "OPTIONS") {
-    res.status(204).end();
-    return;
-  }
-
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Use POST" });
-    return;
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    // Säkerställ att API-nyckel finns i Vercel → Project Settings → Environment Variables
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(500).json({ error: "Missing OPENAI_API_KEY on server" });
-      return;
+    const { message, sessionId } = req.body || {};
+    if (!message || !sessionId) {
+      return res.status(400).json({ error: 'Missing message or sessionId' });
     }
 
-    // Enkla guardrails för inkommande body
-    const body = req.body || {};
-    const message = (body.message || "").toString().trim();
-    if (!message) {
-      res.status(400).json({ error: "Missing 'message' in JSON body" });
-      return;
-    }
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    // 1) Läs historik (lista med JSON-strängar)
+    const key = `chat:${sessionId}`;
+    const raw = await kv.lrange(key, -40, -1); // hämta sista ~40 poster
+    const history = raw.map((s) => JSON.parse(s));
 
-    // --- OpenAI Responses API ---
-    const completion = await client.responses.create({
-      model: "gpt-4o-mini", // billig & snabb för chat
-      input: [
-        {
-          role: "system",
-          content:
-            "Du är en hjälpsam, saklig assistent för en svensk webbyrå. Svara koncist, tydligt och på svenska.",
-        },
-        { role: "user", content: message },
-      ],
-      max_output_tokens: 600,
+    // 2) Trimma historik (håll nere tokenkostnad)
+    const MAX_EXCHANGES = 20;
+    const trimmed = history.slice(-MAX_EXCHANGES);
+
+    // 3) Bygg meddelanden till modellen
+    const system = {
+  role: "system",
+  content: `
+    Du är Webbyrå Sigtunas digitala assistent. 
+    Ditt uppdrag är att hjälpa besökare att förstå våra tjänster inom webbdesign, SEO, digital marknadsföring och strategisk utveckling. 
+    Du svarar alltid på svenska, med ett professionellt och engagerande tonfall — vänligt, kunnigt och framåtblickande. 
+
+    ### Dina mål:
+    1. Hjälp användaren att förstå hur vi kan lösa deras behov eller frågor på ett tydligt och effektivt sätt.
+    2. Hänvisa gärna till en relevant tjänst eller sida på webbyrasigtuna.se när det passar.
+    3. Föreslå gärna att boka ett möte med Andreas när det verkar naturligt – till exempel om användaren uttrycker intresse eller behöver mer personlig rådgivning.
+
+    ### Begränsningar:
+    - Prata inte om att du är en AI-modell eller tränad på data.
+    - Svara inte på ämnen utanför digital marknadsföring, webb, SEO, eller relaterade tjänster.
+    - Om något ligger utanför ditt område, säg artigt att det inte är ditt expertområde och föreslå kontakt med oss istället.
+
+    Om användaren nämner ord som pris, offert, projekt, ny hemsida eller SEO, föreslå att boka ett möte.
+    Avsluta gärna dina svar med en positiv och uppmuntrande ton, i linje med Webbyrå Sigtunas varumärke.
+    `
+    };
+
+    const messages = [system, ...trimmed, { role: 'user', content: message }];
+
+    // 4) Hämta svar från OpenAI
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages,
+      temperature: 0.3,
     });
 
-    const reply = completion?.output_text || "";
+    const reply =
+      completion?.choices?.[0]?.message?.content?.trim() ||
+      'Jag är osäker just nu. Vill du omformulera frågan?';
 
-    // (Valfritt) Enkel intent-detektering — klienten kan lyssna på detta
-    const booking_intent =
-      /\b(boka|bokning|meeting|möte|konsultation|call)\b/i.test(message) ||
-      /\b(boka|meeting|möte)\b/i.test(reply);
+    // 5) Spara nytt in/ut i KV (append)
+    await kv.rpush(key, JSON.stringify({ role: 'user', content: message }));
+    await kv.rpush(key, JSON.stringify({ role: 'assistant', content: reply }));
 
-    res.status(200).json({ reply, booking_intent });
+    // 6) Sätt TTL (t.ex. 7 dagar)
+    await kv.expire(key, 60 * 60 * 24 * 7);
+
+    // 7) Enkel bokningsintention (kan förbättras senare)
+    const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
+
+    return res.status(200).json({ reply, booking_intent });
   } catch (err) {
-    // Logga till Vercel Functions Logs, men exponera inte detaljer till klient
-    console.error("[api/chat] error:", err);
-    res.status(500).json({ error: "Server error" });
+    console.error('Chat error:', err);
+    return res.status(500).json({ error: 'Server error' });
   }
 }
