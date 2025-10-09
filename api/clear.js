@@ -1,16 +1,16 @@
-// api/clear.js
+// /api/clear.js
 import { kv } from '@vercel/kv';
 
-// överst i filen, under imports
+/* --- CORS helpers (som i /api/chat.js) --- */
 const ALLOWED_ORIGINS = [
   'https://webbyrasigtuna.se',
-  /\.webbyrasigtuna\.se$/ // matchar valfri subdomän, t.ex. kundportal.webbyrasigtuna.se
+  /\.webbyrasigtuna\.se$/, // subdomäner
 ];
 
 function isAllowedOrigin(origin = '') {
   try {
-    const { origin: o } = new URL(origin);
-    return ALLOWED_ORIGINS.some((rule) =>
+    const o = new URL(origin).origin;
+    return ALLOWED_ORIGINS.some(rule =>
       typeof rule === 'string' ? rule === o : rule.test(o)
     );
   } catch {
@@ -18,33 +18,37 @@ function isAllowedOrigin(origin = '') {
   }
 }
 
-// i din handler – allra först:
-if (req.method === 'OPTIONS') {
+function setCors(req, res) {
   const origin = req.headers.origin || '';
   if (isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    return res.status(204).end();
   }
-  return res.status(403).end();
 }
 
-// för POST-svaret – innan du skickar JSON:
-const origin = req.headers.origin || '';
-if (isAllowedOrigin(origin)) {
-  res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Vary', 'Origin');
-}
-
+/* --- Main handler --- */
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
   try {
+    // Preflight
+    if (req.method === 'OPTIONS') {
+      setCors(req, res);
+      return res.status(204).end();
+    }
+
+    // Endast POST
+    if (req.method !== 'POST') {
+      setCors(req, res);
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    setCors(req, res);
+
     const { sessionId } = req.body || {};
-    if (!sessionId) return res.status(400).json({ error: 'Missing sessionId' });
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Missing sessionId' });
+    }
 
     const key = `chat:${sessionId}`;
     await kv.del(key);
@@ -52,6 +56,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('Clear error:', err);
+    // Skicka CORS även vid fel så klienten kan läsa svaret
+    setCors(req, res);
     return res.status(500).json({ error: 'Server error' });
   }
 }
