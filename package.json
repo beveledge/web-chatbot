@@ -2,19 +2,21 @@
   "name": "web-chatbot",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
   "type": "module",
+  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vercel dev",
+    "build": "echo \"(serverless build on Vercel)\"",
+    "test": "echo \"no tests\""
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@vercel/kv": "^3.0.0",
+    "@vercel/kv": "^1.0.1",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "jsdom": "^27.0.0",
+    "jsdom": "^24.0.0",
     "node-fetch": "^3.3.2",
     "openai": "^6.2.0"
   }
