@@ -86,7 +86,6 @@ async function loadPostUrls() {
     const cached = await kv.get(POSTS_CACHE_KEY);
     if (Array.isArray(cached) && cached.length) return cached;
   } catch {}
-  // Försök via index, annars direkt post-sitemap
   let postUrls = [];
   try {
     const indexXml = await fetchText(SITEMAP_INDEX);
@@ -101,7 +100,6 @@ async function loadPostUrls() {
       postUrls = extractXmlLocs(await fetchText('https://webbyrasigtuna.se/post-sitemap1.xml'));
     } catch {}
   }
-  // Begränsa till rätt host
   postUrls = filterHost(postUrls);
   try { await kv.set(POSTS_CACHE_KEY, postUrls, { ex: SITEMAP_TTL }); } catch {}
   return postUrls;
@@ -110,8 +108,8 @@ async function loadPostUrls() {
 /* ===== Enkel svensk tokenisering för matchning mot slug ===== */
 const STOPWORDS = new Set([
   'och','att','som','för','med','en','ett','det','den','de','vi','ni','jag','hur','varför','tips','om','till','på','i','av','er','era','vår','vårt','våra',
-  'din','ditt','dina','han','hon','man','min','mitt','mina','din','ditt','dina','era','deras','från','mer','mindre','utan','eller','så','också','kan','ska',
-  'få','får','var','är','bli','blir','nya','ny','din','dina','era'
+  'din','ditt','dina','han','hon','man','min','mitt','mina','era','deras','från','mer','mindre','utan','eller','så','också','kan','ska',
+  'få','får','var','är','bli','blir','nya','ny','din','dina'
 ]);
 function tokenizeSv(s) {
   return (s || '')
@@ -120,13 +118,30 @@ function tokenizeSv(s) {
     .split(/[\s/._-]+/)
     .filter(t => t && !STOPWORDS.has(t) && t.length > 1);
 }
+
+/* ===== Slug → svensk titel i meningsfall ===== */
 function prettyFromSlug(url) {
   try {
     const u = new URL(url);
     const segs = u.pathname.split('/').filter(Boolean);
-    const last = segs[segs.length - 1] || '';
-    return last.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  } catch { return url; }
+    let s = decodeURIComponent(segs[segs.length - 1] || '');
+
+    // slug → text
+    s = s.replace(/-/g, ' ').toLowerCase(); // “sa gor du lokal seo”
+    s = s.replace(/\s+/g, ' ').trim();
+
+    // meningsfall
+    if (s) s = s.charAt(0).toUpperCase() + s.slice(1);
+
+    // varumärken/akronymer
+    s = s.replace(/\bseo\b/g, 'SEO');
+    s = s.replace(/\blokal seo\b/g, 'lokal SEO'); // svensk praxis: bara första ordet versalt
+    s = s.replace(/\bwordpress\b/g, 'WordPress');
+
+    return s;
+  } catch {
+    return url;
+  }
 }
 
 /* ===== Main handler ===== */
@@ -239,7 +254,7 @@ Format:
       return null;
     }
 
-    // 1) Inline-konvertera orphan-etiketter till riktiga länkar (om kända + i sitemap)
+    // 1) Inline-konvertera orphan-etiketter [Lokal SEO] → [Lokal SEO](URL) (om kända + i sitemap)
     const inlineLinkedKeys = new Set();
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
       const label = labelRaw.trim().toLowerCase();
@@ -253,15 +268,32 @@ Format:
       return labelRaw;
     });
 
-    // 1b) Inline-fix för frasen "här: <Etikett>" utan länk
-    reply = reply.replace(/här:\s*(Lokal SEO|SEO|WordPress(?:-underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)\.?/gi,
-      (m, labelRaw) => {
-        const key = keyFromLabel(labelRaw);
+    // 1b) Robust inline-länkning för frasen "… här: <Etikett>"
+    const LABELS_RE = /(Lokal SEO|SEO|WordPress(?:-underhåll)?|WordPress|Underhåll|Webbdesign|Tjänster|Annonsering)/i;
+
+    // Pass 1: “här: <Etikett>”
+    reply = reply.replace(
+      new RegExp(`(här\\s*:\\s*)${LABELS_RE.source}(\\.)?`, 'gi'),
+      (m, prefix, labelRaw, dot) => {
+        const key = keyFromLabel(labelRaw || '');
         if (!key) return m;
         const url = LINKS[key];
         if (!url || !sitemapUrls.has(url)) return m;
         inlineLinkedKeys.add(key);
-        return `här: [${canonicalLabel(key)}](${url})`;
+        return `${prefix}[${canonicalLabel(key)}](${url})${dot || ''}`;
+      }
+    );
+
+    // Pass 2: “Läs mer … <Etikett>.” (utan “här:”)
+    reply = reply.replace(
+      new RegExp(`(Läs\\s+mer[^\\n\\.]*?)\\b${LABELS_RE.source}\\b(\\.)?`, 'gi'),
+      (m, lead, labelRaw, dot) => {
+        const key = keyFromLabel(labelRaw || '');
+        if (!key) return m;
+        const url = LINKS[key];
+        if (!url || !sitemapUrls.has(url)) return m;
+        inlineLinkedKeys.add(key);
+        return `${lead}[${canonicalLabel(key)}](${url})${dot || ''}`;
       }
     );
 
@@ -281,7 +313,7 @@ Format:
       const url = LINKS[k];
       if (lower.includes(k) && !reply.includes(url) && !inlineLinkedKeys.has(k)) {
         if (sitemapUrls.has(url)) {
-          reply += `\n\n📖 Läs mer om ${canonicalLabel(k)}: [${url}](${url})`;
+          reply += `\n\n📖 Läs mer om ${canonicalLabel(k)}: [${canonicalLabel(k)}](${url})`;
           addedServiceLink = true;
         }
         break;
@@ -291,14 +323,13 @@ Format:
     if (!addedServiceLink && /\btjänster\b/i.test(lower)) {
       const url = LINKS['tjänster'];
       if (!reply.includes(url) && sitemapUrls.has(url)) {
-        reply += `\n\n📖 Se en översikt av våra tjänster: [${url}](${url})`;
+        reply += `\n\n📖 Se en översikt av våra tjänster: [Tjänster](${url})`;
       }
     }
 
-    // 4) Infobehov → blogglänk(er). Försök först dynamiskt hitta 1–2 relevanta inlägg.
+    // 4) Infobehov → dynamiska blogginlägg (1–2) eller bloggöversikt
     if (infoTriggers.test(lower)) {
       const qTokens = tokenizeSv(lower);
-      // poängsättning: antal token-overlaps med slug
       const scored = [];
       for (const p of postUrls) {
         try {
@@ -310,27 +341,25 @@ Format:
           for (const t of qTokens) {
             if (slugTokens.includes(t)) score += 1;
           }
-          // liten bonus för “seo”/”lokal”
           if (slugTokens.includes('seo')) score += 0.2;
           if (slugTokens.includes('lokal')) score += 0.2;
-          if (score > 0) scored.push({ url: p, score, title: prettyFromSlug(p) });
+          if (score > 0) scored.push({ url: p, score });
         } catch {}
       }
       scored.sort((a,b)=> b.score - a.score);
-      // välj topp 1–2 som inte redan finns i reply
+
       const suggestions = [];
       for (const s of scored) {
         if (suggestions.length >= 2) break;
         if (!reply.includes(s.url)) suggestions.push(s);
       }
       if (suggestions.length) {
-        // Lägg rubrikrad
         reply += `\n\n📰 Relaterad läsning:\n`;
         for (const s of suggestions) {
-          reply += `- [${s.title}](${s.url})\n`;
+          const nice = prettyFromSlug(s.url);
+          reply += `- [${nice}](${s.url})\n`;
         }
       } else if (!reply.includes(BLOG_URL) && sitemapUrls.has(BLOG_URL)) {
-        // fallback till bloggöversikt
         reply += `\n\n💡 Vill du läsa fler tips och guider? Kolla vår [blogg](${BLOG_URL}) för mer inspiration.`;
       }
     }
