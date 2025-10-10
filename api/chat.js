@@ -227,24 +227,21 @@ Format:
     };
     const inlineLinkedKeys = new Set();
 
-    reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
-      const label = labelRaw.trim().toLowerCase();
-      const key =
-        label === 'tjänster' ? 'tjänster' :
-        label === 'lokal seo' ? 'lokal seo' :
-        label === 'seo' ? 'seo' :
-        label.startsWith('wordpress') ? 'wordpress' :
-        LABEL_MAP[label] ? label : null;
+    // === Förbättrad ersättning av flera [etiketter] i samma mening ===
+reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
+  const label = labelRaw.trim().toLowerCase();
 
-      if (!key) return labelRaw; // okänd – lämna som ren text
+  // Matcha både enskilda och sammansatta termer som "seo", "lokal seo", "wordpress-underhåll"
+  const key = Object.keys(LABEL_MAP).find(k => label.includes(k));
+  if (!key) return labelRaw; // okänd – lämna som ren text
 
-      const url = LABEL_MAP[key];
-      if (url && sitemapUrls.has(url)) {
-        inlineLinkedKeys.add(key);
-        return `[${canonicalLabel(key)}](${url})`;
-      }
-      return labelRaw; // om inte i sitemap, lämna ren text
-    });
+  const url = LABEL_MAP[key];
+  if (url && sitemapUrls.has(url)) {
+    inlineLinkedKeys.add(key);
+    return `[${canonicalLabel(key)}](${url})`;
+  }
+  return labelRaw;
+});
 
     /* ==== 4) Plocka bort eventuella råa okända URL:er i modellens text ==== */
     const allUrls = new Set([
