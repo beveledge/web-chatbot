@@ -9,7 +9,7 @@ function isAllowedOrigin(origin = '') {
     const host = u.hostname;
     const ALLOWED = [
       'webbyrasigtuna.se',
-      /^[a-z0-9-]+\.webbyrasigtuna\.se$/i,
+      /^[a-z0-9-]+\.webbyrasigtuna\.se$/i, // valfri subdomän
     ];
     return ALLOWED.some(rule =>
       typeof rule === 'string' ? rule === host : rule.test(host)
@@ -35,7 +35,8 @@ const SITEMAP_FALLBACKS = [
   'https://webbyrasigtuna.se/page-sitemap1.xml',
 ];
 const SITEMAP_CACHE_KEY = 'sitemap:urls';
-const SITEMAP_TTL = 60 * 60 * 24; // 24h
+const POSTS_CACHE_KEY   = 'sitemap:posts';
+const SITEMAP_TTL       = 60 * 60 * 24; // 24h
 
 async function fetchText(url) {
   const r = await fetch(url);
@@ -79,11 +80,60 @@ async function loadSitemapUrls() {
   return set;
 }
 
+/* ===== Endast blogginlägg från post-sitemap1.xml (cache) ===== */
+async function loadPostUrls() {
+  try {
+    const cached = await kv.get(POSTS_CACHE_KEY);
+    if (Array.isArray(cached) && cached.length) return cached;
+  } catch {}
+  // Försök via index, annars direkt post-sitemap
+  let postUrls = [];
+  try {
+    const indexXml = await fetchText(SITEMAP_INDEX);
+    const subs = extractXmlLocs(indexXml);
+    const postMaps = subs.filter(u => /post-sitemap/i.test(u));
+    for (const sm of postMaps) {
+      try { postUrls.push(...extractXmlLocs(await fetchText(sm))); } catch {}
+    }
+  } catch {}
+  if (!postUrls.length) {
+    try {
+      postUrls = extractXmlLocs(await fetchText('https://webbyrasigtuna.se/post-sitemap1.xml'));
+    } catch {}
+  }
+  // Begränsa till rätt host
+  postUrls = filterHost(postUrls);
+  try { await kv.set(POSTS_CACHE_KEY, postUrls, { ex: SITEMAP_TTL }); } catch {}
+  return postUrls;
+}
+
+/* ===== Enkel svensk tokenisering för matchning mot slug ===== */
+const STOPWORDS = new Set([
+  'och','att','som','för','med','en','ett','det','den','de','vi','ni','jag','hur','varför','tips','om','till','på','i','av','er','era','vår','vårt','våra',
+  'din','ditt','dina','han','hon','man','min','mitt','mina','din','ditt','dina','era','deras','från','mer','mindre','utan','eller','så','också','kan','ska',
+  'få','får','var','är','bli','blir','nya','ny','din','dina','era'
+]);
+function tokenizeSv(s) {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFKD').replace(/[^\p{Letter}\p{Number}\s-]/gu, ' ')
+    .split(/[\s/._-]+/)
+    .filter(t => t && !STOPWORDS.has(t) && t.length > 1);
+}
+function prettyFromSlug(url) {
+  try {
+    const u = new URL(url);
+    const segs = u.pathname.split('/').filter(Boolean);
+    const last = segs[segs.length - 1] || '';
+    return last.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  } catch { return url; }
+}
+
 /* ===== Main handler ===== */
 export default async function handler(req, res) {
   try {
     if (req.method === 'OPTIONS') { setCors(req, res); return res.status(204).end(); }
-    if (req.method !== 'POST') { setCors(req, res); return res.status(405).json({ error: 'Method not allowed' }); }
+    if (req.method !== 'POST')   { setCors(req, res); return res.status(405).json({ error: 'Method not allowed' }); }
     setCors(req, res);
 
     if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: 'OPENAI_API_KEY missing' });
@@ -145,8 +195,9 @@ Format:
       .replace(/\bseo\b/gi, 'SEO')
       .replace(/\bwordpress\b/gi, 'WordPress');
 
-    // Ladda sitemap
+    // Ladda sitemap + postlista
     const sitemapUrls = await loadSitemapUrls();
+    const postUrls    = await loadPostUrls(); // Array<string> med blogginlägg
 
     // Kända målsidor
     const LINKS = {
@@ -159,7 +210,7 @@ Format:
       'annonsering': 'https://webbyrasigtuna.se/digital-annonsering/',
       'tjänster': 'https://webbyrasigtuna.se/vara-digitala-marknadsforingstjanster/',
     };
-    const BLOG_URL = 'https://webbyrasigtuna.se/blogg/';
+    const BLOG_URL       = 'https://webbyrasigtuna.se/blogg/';
     const LEAD_LOCAL_URL = 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/';
     const LEAD_SEO_URL   = 'https://webbyrasigtuna.se/gratis-seo-analys/';
 
@@ -176,14 +227,24 @@ Format:
       if (k.startsWith('wordpress') || k === 'underhåll') return 'WordPress-underhåll';
       return k.charAt(0).toUpperCase() + k.slice(1);
     }
+    function keyFromLabel(label) {
+      const l = label.trim().toLowerCase();
+      if (l.includes('lokal seo')) return 'lokal seo';
+      if (l === 'seo') return 'seo';
+      if (l.startsWith('wordpress')) return 'wordpress';
+      if (l.includes('underhåll')) return 'underhåll';
+      if (l.includes('webbdesign')) return 'webbdesign';
+      if (l.includes('tjänster')) return 'tjänster';
+      if (l.includes('annonsering')) return 'annonsering';
+      return null;
+    }
 
-    // 1) Inline-konvertera alla orphan-etiketter till korrekta länkar (om kända + i sitemap)
+    // 1) Inline-konvertera orphan-etiketter till riktiga länkar (om kända + i sitemap)
     const inlineLinkedKeys = new Set();
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
       const label = labelRaw.trim().toLowerCase();
-      // hitta nyckel genom “contains”-match (fångar "Lokal SEO", "WordPress-underhåll", etc.)
       const key = Object.keys(LINKS).find(k => label.includes(k));
-      if (!key) return labelRaw; // okänd etikett → lämna som ren text
+      if (!key) return labelRaw;
       const url = LINKS[key];
       if (url && sitemapUrls.has(url)) {
         inlineLinkedKeys.add(key);
@@ -191,6 +252,18 @@ Format:
       }
       return labelRaw;
     });
+
+    // 1b) Inline-fix för frasen "här: <Etikett>" utan länk
+    reply = reply.replace(/här:\s*(Lokal SEO|SEO|WordPress(?:-underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)\.?/gi,
+      (m, labelRaw) => {
+        const key = keyFromLabel(labelRaw);
+        if (!key) return m;
+        const url = LINKS[key];
+        if (!url || !sitemapUrls.has(url)) return m;
+        inlineLinkedKeys.add(key);
+        return `här: [${canonicalLabel(key)}](${url})`;
+      }
+    );
 
     // 2) Rensa bort ev. råa okända URL:er (behåll endast sådana som finns i sitemap)
     const allUrls = new Set([
@@ -222,9 +295,44 @@ Format:
       }
     }
 
-    // 4) Infobehov → blogglänk
-    if (infoTriggers.test(lower) && !reply.includes(BLOG_URL) && sitemapUrls.has(BLOG_URL)) {
-      reply += `\n\n💡 Vill du läsa fler tips och guider? Kolla vår [blogg](${BLOG_URL}) för mer inspiration.`;
+    // 4) Infobehov → blogglänk(er). Försök först dynamiskt hitta 1–2 relevanta inlägg.
+    if (infoTriggers.test(lower)) {
+      const qTokens = tokenizeSv(lower);
+      // poängsättning: antal token-overlaps med slug
+      const scored = [];
+      for (const p of postUrls) {
+        try {
+          const u = new URL(p);
+          const segs = u.pathname.split('/').filter(Boolean);
+          const last = segs[segs.length - 1] || '';
+          const slugTokens = tokenizeSv(last);
+          let score = 0;
+          for (const t of qTokens) {
+            if (slugTokens.includes(t)) score += 1;
+          }
+          // liten bonus för “seo”/”lokal”
+          if (slugTokens.includes('seo')) score += 0.2;
+          if (slugTokens.includes('lokal')) score += 0.2;
+          if (score > 0) scored.push({ url: p, score, title: prettyFromSlug(p) });
+        } catch {}
+      }
+      scored.sort((a,b)=> b.score - a.score);
+      // välj topp 1–2 som inte redan finns i reply
+      const suggestions = [];
+      for (const s of scored) {
+        if (suggestions.length >= 2) break;
+        if (!reply.includes(s.url)) suggestions.push(s);
+      }
+      if (suggestions.length) {
+        // Lägg rubrikrad
+        reply += `\n\n📰 Relaterad läsning:\n`;
+        for (const s of suggestions) {
+          reply += `- [${s.title}](${s.url})\n`;
+        }
+      } else if (!reply.includes(BLOG_URL) && sitemapUrls.has(BLOG_URL)) {
+        // fallback till bloggöversikt
+        reply += `\n\n💡 Vill du läsa fler tips och guider? Kolla vår [blogg](${BLOG_URL}) för mer inspiration.`;
+      }
     }
 
     // 5) Lead-intention → rätt gratis-analys
@@ -243,7 +351,7 @@ Format:
     // Spara historik
     await kv.rpush(key, JSON.stringify({ role: 'user', content: message }));
     await kv.rpush(key, JSON.stringify({ role: 'assistant', content: reply }));
-    await kv.expire(key, 60 * 60 * 24 * 7);
+    await kv.expire(key, 60 * 60 * 24);
 
     // Intentflaggor
     const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
