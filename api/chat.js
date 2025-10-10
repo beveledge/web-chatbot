@@ -168,6 +168,17 @@ function mapLabel(labelRaw = '') {
   return null;
 }
 
+/* Display-namn per nyckel vid kuraterad tilläggslänk */
+function displayForKey(k) {
+  if (k === 'wordpress-underhåll' || k === 'underhåll') return 'WordPress-underhåll';
+  if (k === 'lokal seo') return 'Lokal SEO';
+  if (k === 'seo') return 'SEO';
+  if (k === 'webbdesign') return 'Webbdesign';
+  if (k === 'annonsering') return 'Annonsering';
+  if (k === 'tjänster') return 'Tjänster';
+  return k.charAt(0).toUpperCase() + k.slice(1);
+}
+
 /* =========================
    Main handler
    ========================= */
@@ -202,7 +213,7 @@ Mål:
 
 Begränsningar:
 - Gå inte utanför ovanstående områden. Hänvisa artigt till kontakt om något ligger utanför.
-- Påstå inte att du “har träningsdata”; beskriv istället att du baserar svar på vårt innehåll och generell branschkunskap.
+- Påstå inte att du “har träningsdata”; beskriv i stället att du baserar svar på vårt innehåll och generell branschkunskap.
 - Om du är osäker: be om förtydligande eller föreslå ett kort möte.
 
 Svarsstruktur (när det passar):
@@ -233,7 +244,7 @@ Format:
 
     /* 0) Grund-normalisering innan länklogik */
     reply = reply
-      .replace(/\u00A0/g, ' ')                    // NBSP → space
+      .replace(/\u00A0/g, ' ')                     // NBSP → space
       .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-') // snyggstreck → '-'
       .replace(/\blokal seo\b/gi, 'Lokal SEO')
       .replace(/\bseo\b/gi, 'SEO')
@@ -337,24 +348,34 @@ Format:
       .replace(/\[(SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[SEO-tjänster]($2)')
       .replace(/\[(Lokal SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[Lokal SEO-tjänster]($2)');
 
-    /* 4) Rensa råa URL:er som inte finns i sitemap */
+    /* 3d) Extra städning: länk följt av "här: Ordet."  */
+    reply = reply.replace(
+      /(\[[^\]]+\]\([^)]+\))\s+här\s*:\s*[A-ZÅÄÖa-zåäö0-9 \-]+(\.)/g,
+      '$1$2'
+    );
+
+    /* 4) Råa URL:er → klickbara om de finns i sitemap, annars bort */
     const allUrls = new Set([
       ...[...reply.matchAll(/\]\((https?:\/\/[^\s)]+)\)/gi)].map(m => m[1]),
       ...[...reply.matchAll(/https?:\/\/[^\s)\]]+/gi)].map(m => m[0]),
     ]);
     const toKeep = new Set([...allUrls].filter(u => sitemapUrls.has(u)));
-    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => (toKeep.has(u) ? u : ''));
+    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => {
+      if (!toKeep.has(u)) return '';
+      const nice = prettyFromSlug(u);
+      return `[${nice}](${u})`;
+    });
     reply = reply.replace(/\(\s*\)/g, '');
 
-    /* 5) Ev. kuraterad tjänstelänk om inget redan satts */
+    /* 5) Kuraterad tjänstelänk om inget redan satts */
     const order = ['lokal seo', 'seo', 'wordpress', 'wordpress-underhåll', 'underhåll', 'webbdesign', 'annonsering'];
     let addedServiceLink = false;
     for (const k of order) {
       const url = LINKS[k];
       if (lower.includes(k) && !reply.includes(url) && !inlineLinkedKeys.has(k)) {
         if (sitemapUrls.has(url)) {
-          const mapped = mapLabel(k) || { display: k.charAt(0).toUpperCase() + k.slice(1) };
-          reply += `\n\n📖 Läs mer om ${mapped.display}: [${mapped.display}](${url})`;
+          const display = displayForKey(k);
+          reply += `\n\n📖 Läs mer om ${display}: [${display}](${url})`;
           addedServiceLink = true;
         }
         break;
