@@ -281,10 +281,19 @@ Format:
     );
 
     /* === 2b) Ta bort dublettfraser efter länkning: "… [X](url) här: X." → behåll bara länken === */
-    reply = reply.replace(
-      /(\[[^\]]+\]\([^)]+\))\s*här\s*:\s*(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign|Annonsering)\./gi,
-      '$1.'
-    );
+   /* === 2b) Ta bort dublettfraser efter länkning ===
+   Ex: "… [Tjänster](url) inom SEO här: SEO-tjänster." -> "… [Tjänster](url) inom SEO."
+   Gäller alla etiketter och fångar även "inom SEO" m.m. före "här:" */
+reply = reply.replace(
+  /(\[[^\]]+\]\([^)]+\)[^.]*?)\s+här\s*:\s*[^.\n]+(\.)/gi,
+  '$1$2'
+);
+
+// (behåll gärna denna mer specifika som extra säkerhet – gör inget om båda finns)
+reply = reply.replace(
+  /(\[[^\]]+\]\([^)]+\))\s*här\s*:\s*(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign|Annonsering)\./gi,
+  '$1.'
+);
 
     /* === 3) “Läs mer … <Etikett>.” (utan “här:”) → länk === */
     reply = reply.replace(
