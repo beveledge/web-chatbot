@@ -2,9 +2,7 @@
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 
-/* =========================
-   CORS (hostname-baserad)
-   ========================= */
+/* ========== CORS (hostname-baserad) ========== */
 function isAllowedOrigin(origin = '') {
   try {
     const u = new URL(origin);
@@ -30,9 +28,7 @@ function setCors(req, res) {
   }
 }
 
-/* =========================
-   Sitemap-cache & helpers
-   ========================= */
+/* ========== Sitemap-cache & helpers ========== */
 const SITEMAP_INDEX = 'https://webbyrasigtuna.se/sitemaps.xml';
 const SITEMAP_FALLBACKS = [
   'https://webbyrasigtuna.se/post-sitemap1.xml',
@@ -107,9 +103,7 @@ async function loadPostUrls() {
   return postUrls;
 }
 
-/* =========================
-   Svenska hjälp-funktioner
-   ========================= */
+/* ========== Svenska hjälp-funktioner ========== */
 const STOPWORDS = new Set([
   'och','att','som','för','med','en','ett','det','den','de','vi','ni','jag','hur','varför','tips','om','till','på','i','av','er','era',
   'vår','vårt','våra','din','ditt','dina','han','hon','man','min','mitt','mina','deras','från','mer','mindre','utan','eller','så',
@@ -140,7 +134,7 @@ function prettyFromSlug(url) {
   }
 }
 
-/* Label-mappning (stödjer "-tjänster" och varianter) */
+/* Label-mappning + display-namn (hanterar även “-tjänster”) */
 function mapLabel(labelRaw = '') {
   const norm = labelRaw
     .replace(/\u00A0/g, ' ')
@@ -168,20 +162,7 @@ function mapLabel(labelRaw = '') {
   return null;
 }
 
-/* Display-namn per nyckel vid kuraterad tilläggslänk */
-function displayForKey(k) {
-  if (k === 'wordpress-underhåll' || k === 'underhåll') return 'WordPress-underhåll';
-  if (k === 'lokal seo') return 'Lokal SEO';
-  if (k === 'seo') return 'SEO';
-  if (k === 'webbdesign') return 'Webbdesign';
-  if (k === 'annonsering') return 'Annonsering';
-  if (k === 'tjänster') return 'Tjänster';
-  return k.charAt(0).toUpperCase() + k.slice(1);
-}
-
-/* =========================
-   Main handler
-   ========================= */
+/* ========== Huvud-handler ========== */
 export default async function handler(req, res) {
   try {
     if (req.method === 'OPTIONS') { setCors(req, res); return res.status(204).end(); }
@@ -213,7 +194,7 @@ Mål:
 
 Begränsningar:
 - Gå inte utanför ovanstående områden. Hänvisa artigt till kontakt om något ligger utanför.
-- Påstå inte att du “har träningsdata”; beskriv i stället att du baserar svar på vårt innehåll och generell branschkunskap.
+- Påstå inte att du “har träningsdata”; beskriv istället att du baserar svar på vårt innehåll och generell branschkunskap.
 - Om du är osäker: be om förtydligande eller föreslå ett kort möte.
 
 Svarsstruktur (när det passar):
@@ -242,19 +223,17 @@ Format:
       completion?.choices?.[0]?.message?.content?.trim() ||
       'Jag är osäker just nu. Vill du omformulera frågan?';
 
-    /* 0) Grund-normalisering innan länklogik */
+    /* ---------- Normalisering ---------- */
     reply = reply
-      .replace(/\u00A0/g, ' ')                     // NBSP → space
+      .replace(/\u00A0/g, ' ')                    // NBSP → space
       .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-') // snyggstreck → '-'
       .replace(/\blokal seo\b/gi, 'Lokal SEO')
       .replace(/\bseo\b/gi, 'SEO')
       .replace(/\bwordpress\b/gi, 'WordPress');
 
-    // Ladda sitemap + postlista
     const sitemapUrls = await loadSitemapUrls();
     const postUrls    = await loadPostUrls();
 
-    // Kända målsidor
     const LINKS = {
       'lokal seo': 'https://webbyrasigtuna.se/hjalp-med-lokal-seo/',
       'seo': 'https://webbyrasigtuna.se/sokmotoroptimering/',
@@ -273,7 +252,19 @@ Format:
     const lower = message.toLowerCase();
     const inlineLinkedKeys = new Set();
 
-    /* 1) Orphan-etiketter [SEO], [Lokal SEO], [SEO-tjänster] → länk */
+    /* === FIX 1: orphan [SEO] + suffix “-tjänster” → länka korrekt === */
+    reply = reply.replace(/\[(SEO)\]\s*[–-]?\s*tja?nster/gi, (m, _kw) => {
+      const url = LINKS['seo']; if (!sitemapUrls.has(url)) return 'SEO-tjänster';
+      inlineLinkedKeys.add('seo');
+      return `[SEO-tjänster](${url})`;
+    });
+    reply = reply.replace(/\[(Lokal\s*SEO)\]\s*[–-]?\s*tja?nster/gi, (m, _kw) => {
+      const url = LINKS['lokal seo']; if (!sitemapUrls.has(url)) return 'Lokal SEO-tjänster';
+      inlineLinkedKeys.add('lokal seo');
+      return `[Lokal SEO-tjänster](${url})`;
+    });
+
+    /* === FIX 2: orphan-etiketter [SEO] / [Lokal SEO] → länka === */
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
       const mapped = mapLabel(labelRaw);
       if (!mapped) return labelRaw;
@@ -285,9 +276,9 @@ Format:
       return labelRaw;
     });
 
-    /* 2) “här: <Etikett>” → länk på etiketten (inkl. -tjänster) */
+    /* === FIX 3: “här: <Etikett>” → gör etiketten klickbar (utan dubbelt efteråt) === */
     reply = reply.replace(
-      /(här\s*:\s*)(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)(\.)?/gi,
+      /(här\s*:\s*)(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)\b(\.)?/gi,
       (m, lead, labelRaw, dot) => {
         const mapped = mapLabel(labelRaw);
         const url = mapped && LINKS[mapped.key];
@@ -296,22 +287,13 @@ Format:
         return `${lead}[${mapped.display}](${url})${dot || ''}`;
       }
     );
-
-    /* 2b) Ta bort dublettfraser efter länkning (aggressiv) */
+    // ta bort ev. “här: <Etikett>” som hänger kvar efter länk
     reply = reply.replace(
       /(\[[^\]]+\]\([^)]+\)[^.]*?)\s+här\s*:\s*[^.\n]+(\.)/gi,
       '$1$2'
     );
-    reply = reply.replace(
-      /((?:^|[.!?]\s)[^.]*\[[^\]]+\]\([^)]+\)[^.]*?)\s+här\s*:\s*[^.\n]+(\.)/gi,
-      '$1$2'
-    );
-    reply = reply.replace(
-      /(\[[^\]]+\]\([^)]+\))\s*här\s*:\s*(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign|Annonsering)\./gi,
-      '$1.'
-    );
 
-    /* 3) “Läs mer … <Etikett>.” (utan “här:”) → länk */
+    /* === FIX 4: “Läs mer … <Etikett>.” (utan “här:”) → länk === */
     reply = reply.replace(
       /(Läs\s+mer[^.\n]*?)\b(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)\b(\.)?/gi,
       (m, lead, labelRaw, dot) => {
@@ -323,59 +305,31 @@ Format:
       }
     );
 
-    /* 3b) Kollapsa “Läs mer om … här: [Etikett](URL)” till EN länk */
-    reply = reply.replace(
-      /(Läs\s+mer[^.\n]*?om\s+våra\s+)(SEO(?:[–-]tja?nster)?|Lokal\s+SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?)([^.\n]*?här\s*:\s*)\[(.+?)\]\((https?:\/\/[^)]+)\)(\.)?/gi,
-      (m, lead, labelRaw, _h, _txt, url, dot) => {
-        const mapped = mapLabel(labelRaw);
-        if (!mapped || !sitemapUrls.has(url)) return m;
-        inlineLinkedKeys.add(mapped.key);
-        return `${lead}[${mapped.display}](${url})${dot || ''}`;
-      }
-    );
-    reply = reply.replace(
-      /(Läs\s+mer[^.\n]*?om\s+)(SEO(?:[–-]tja?nster)?|Lokal\s+SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?)([^.\n]*?här\s*:\s*)\[(.+?)\]\((https?:\/\/[^)]+)\)(\.)?/gi,
-      (m, lead, labelRaw, _h, _txt, url, dot) => {
-        const mapped = mapLabel(labelRaw);
-        if (!mapped || !sitemapUrls.has(url)) return m;
-        inlineLinkedKeys.add(mapped.key);
-        return `${lead}[${mapped.display}](${url})${dot || ''}`;
-      }
-    );
-
-    /* 3c) "[SEO](url)-tjänster" → "[SEO-tjänster](url)" */
+    /* === FIX 5: “[SEO](url)-tjänster” → “[SEO-tjänster](url)” === */
     reply = reply
       .replace(/\[(SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[SEO-tjänster]($2)')
       .replace(/\[(Lokal SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[Lokal SEO-tjänster]($2)');
 
-    /* 3d) Extra städning: länk följt av "här: Ordet."  */
-    reply = reply.replace(
-      /(\[[^\]]+\]\([^)]+\))\s+här\s*:\s*[A-ZÅÄÖa-zåäö0-9 \-]+(\.)/g,
-      '$1$2'
-    );
-
-    /* 4) Råa URL:er → klickbara om de finns i sitemap, annars bort */
+    /* Rensa råa URL:er som inte finns i sitemap (behåll bara whitelistan) */
     const allUrls = new Set([
       ...[...reply.matchAll(/\]\((https?:\/\/[^\s)]+)\)/gi)].map(m => m[1]),
       ...[...reply.matchAll(/https?:\/\/[^\s)\]]+/gi)].map(m => m[0]),
     ]);
     const toKeep = new Set([...allUrls].filter(u => sitemapUrls.has(u)));
-    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => {
-      if (!toKeep.has(u)) return '';
-      const nice = prettyFromSlug(u);
-      return `[${nice}](${u})`;
-    });
-    reply = reply.replace(/\(\s*\)/g, '');
+    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => (toKeep.has(u) ? u : ''));
+    reply = reply.replace(/\(\s*\)/g, ''); // tomma parenteser
+    // === FIX 6: ta bort ”ensam slutparentes” efter ord (t.ex. “lokal SEO)”)
+    reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1');
 
-    /* 5) Kuraterad tjänstelänk om inget redan satts */
+    /* Kuraterad tjänstelänk om inget redan satts */
     const order = ['lokal seo', 'seo', 'wordpress', 'wordpress-underhåll', 'underhåll', 'webbdesign', 'annonsering'];
     let addedServiceLink = false;
     for (const k of order) {
       const url = LINKS[k];
       if (lower.includes(k) && !reply.includes(url) && !inlineLinkedKeys.has(k)) {
         if (sitemapUrls.has(url)) {
-          const display = displayForKey(k);
-          reply += `\n\n📖 Läs mer om ${display}: [${display}](${url})`;
+          const mapped = mapLabel(k) || { display: k.charAt(0).toUpperCase() + k.slice(1) };
+          reply += `\n\n📖 Läs mer om ${mapped.display}: [${mapped.display}](${url})`;
           addedServiceLink = true;
         }
         break;
@@ -388,7 +342,7 @@ Format:
       }
     }
 
-    /* 6) Infobehov → 1–2 relaterade inlägg, annars blogg */
+    /* Informationsintention → relaterade inlägg eller blogg */
     if (infoTriggers.test(lower)) {
       const qTokens = tokenizeSv(lower);
       const scored = [];
@@ -423,7 +377,7 @@ Format:
       }
     }
 
-    /* 7) Lead-intention → gratis-analys */
+    /* Lead-intention → gratis-analys */
     if (leadTriggers.test(lower) || lower.includes('lokal seo')) {
       const isLocal = lower.includes('lokal seo');
       const ctaUrl = isLocal ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/' : 'https://webbyrasigtuna.se/gratis-seo-analys/';
@@ -433,16 +387,13 @@ Format:
       }
     }
 
-    /* 8) Sista safety: ta bort orphan-brackets (t.ex. [SEO-tjänster] utan länk) */
-    reply = reply
-      .replace(/\u00A0/g, ' ')
-      .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-')
-      .replace(/\[([^\]]+)\](?!\()/g, '$1');
+    // Sista safety: ta bort kvarvarande orphan-hakparenteser
+    reply = reply.replace(/\[([^\]]+)\](?!\()/g, '$1');
 
     // Spara i KV
     await kv.rpush(key, JSON.stringify({ role: 'user', content: message }));
     await kv.rpush(key, JSON.stringify({ role: 'assistant', content: reply }));
-    await kv.expire(key, 60 * 60 * 24);
+    await kv.expire(key, 60 * 60 * 24); // 24 h
 
     const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
     const lead_intent = lower.includes('lokal seo') || leadTriggers.test(lower);
