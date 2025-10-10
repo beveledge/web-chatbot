@@ -30,7 +30,6 @@ function setCors(req, res) {
 }
 
 /* ===== Sitemap: hämta & cacha alla indexerbara URL:er ===== */
-
 const SITEMAP_INDEX = 'https://webbyrasigtuna.se/sitemaps.xml';
 const SITEMAP_FALLBACKS = [
   'https://webbyrasigtuna.se/post-sitemap1.xml',
@@ -63,15 +62,13 @@ function filterHost(urls, host = 'webbyrasigtuna.se') {
 }
 
 async function loadSitemapUrls() {
-  // 1) Prova cache
   try {
     const cached = await kv.get(SITEMAP_CACHE_KEY);
     if (Array.isArray(cached) && cached.length) return new Set(cached);
-  } catch { /* ignore */ }
+  } catch {}
 
   let urls = [];
   try {
-    // 2) Läser huvudindex → hämta underindex
     const indexXml = await fetchText(SITEMAP_INDEX);
     const submaps = extractXmlLocs(indexXml);
     if (submaps.length) {
@@ -79,27 +76,22 @@ async function loadSitemapUrls() {
         try {
           const xml = await fetchText(sm);
           urls.push(...extractXmlLocs(xml));
-        } catch { /* continue */ }
+        } catch {}
       }
     }
   } catch {
-    // 3) Fallback – hämta kända subindex direkt
     for (const f of SITEMAP_FALLBACKS) {
       try {
         const xml = await fetchText(f);
         urls.push(...extractXmlLocs(xml));
-      } catch { /* continue */ }
+      } catch {}
     }
   }
 
-  // 4) Begränsa till rätt domän & normalisera
   const filtered = filterHost(urls, 'webbyrasigtuna.se');
   const set = new Set(filtered);
 
-  // 5) Cache i KV (lista) med TTL
-  try {
-    await kv.set(SITEMAP_CACHE_KEY, [...set], { ex: SITEMAP_TTL });
-  } catch { /* ignore */ }
+  try { await kv.set(SITEMAP_CACHE_KEY, [...set], { ex: SITEMAP_TTL }); } catch {}
 
   return set;
 }
@@ -189,30 +181,13 @@ Format:
       .replace(/\bseo\b/gi, 'SEO')
       .replace(/\bwordpress\b/gi, 'WordPress');
 
-    /* ==== Ta bort “orphan” markdown-länkar (t.ex. [Tjänster] utan (URL)) ==== */
-    reply = reply.replace(/\[([^\]]+)\](?!\()/g, '$1');
+    /* ==== Ta bort “orphan” label om vi inte kan länka den (hanteras strax under) ==== */
+    // (tillfälligt noop – vi ersätter strax orphans till riktiga länkar om möjligt)
 
-    /* ==== 1) Rensa modellens länkar: behåll bara URL:er som finns i sitemap ==== */
+    /* ==== 1) Ladda sitemap-URL:er ==== */
     const sitemapUrls = await loadSitemapUrls(); // Set<string>
 
-    // Hitta alla URL:er i svaret (markdown + råa)
-    const allUrls = new Set([
-      ...[...reply.matchAll(/\]\((https?:\/\/[^\s)]+)\)/gi)].map(m => m[1]),
-      ...[...reply.matchAll(/https?:\/\/[^\s)\]]+/gi)].map(m => m[0]),
-    ]);
-
-    // Filtrera bort url:er som inte finns i sitemap
-    const toKeep = new Set(
-      [...allUrls].filter(u => sitemapUrls.has(u))
-    );
-
-    // Rensa bort ogiltiga URL:er i texten
-    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => (toKeep.has(u) ? u : ''));
-
-    // Städa tomma parenteser efter ev. borttagna markdown-URL:er
-    reply = reply.replace(/\(\s*\)/g, '');
-
-    /* ==== 2) Kuraterade länkar (lägg till max EN tjänstelänk, utan dubblett) ==== */
+    /* ==== 2) Kända målsidor ==== */
     const LINKS = {
       "lokal seo": "https://webbyrasigtuna.se/hjalp-med-lokal-seo/",
       "seo": "https://webbyrasigtuna.se/sokmotoroptimering/",
@@ -232,17 +207,61 @@ Format:
 
     const lower = message.toLowerCase();
 
+    /* ==== 3) Ersätt orphan-etiketter inline till riktiga länkar (om kända & i sitemap) ==== */
+    function canonicalLabel(k) {
+      if (k === 'lokal seo') return 'Lokal SEO';
+      if (k === 'seo') return 'SEO';
+      if (k.startsWith('wordpress') || k === 'underhåll') return 'WordPress-underhåll';
+      if (k === 'tjänster') return 'Tjänster';
+      return k.charAt(0).toUpperCase() + k.slice(1);
+    }
+    const LABEL_MAP = {
+      'tjänster': SERVICES_OVERVIEW,
+      'lokal seo': LINKS['lokal seo'],
+      'seo': LINKS['seo'],
+      'wordpress': LINKS['wordpress'],
+      'wordpress-underhåll': LINKS['wordpress-underhåll'],
+      'underhåll': LINKS['underhåll'],
+      'webbdesign': LINKS['webbdesign'],
+      'annonsering': LINKS['annonsering'],
+    };
+    const inlineLinkedKeys = new Set();
+
+    reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
+      const label = labelRaw.trim().toLowerCase();
+      const key =
+        label === 'tjänster' ? 'tjänster' :
+        label === 'lokal seo' ? 'lokal seo' :
+        label === 'seo' ? 'seo' :
+        label.startsWith('wordpress') ? 'wordpress' :
+        LABEL_MAP[label] ? label : null;
+
+      if (!key) return labelRaw; // okänd – lämna som ren text
+
+      const url = LABEL_MAP[key];
+      if (url && sitemapUrls.has(url)) {
+        inlineLinkedKeys.add(key);
+        return `[${canonicalLabel(key)}](${url})`;
+      }
+      return labelRaw; // om inte i sitemap, lämna ren text
+    });
+
+    /* ==== 4) Plocka bort eventuella råa okända URL:er i modellens text ==== */
+    const allUrls = new Set([
+      ...[...reply.matchAll(/\]\((https?:\/\/[^\s)]+)\)/gi)].map(m => m[1]),
+      ...[...reply.matchAll(/https?:\/\/[^\s)\]]+/gi)].map(m => m[0]),
+    ]);
+    const toKeep = new Set([...allUrls].filter(u => sitemapUrls.has(u)));
+    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => (toKeep.has(u) ? u : ''));
+    reply = reply.replace(/\(\s*\)/g, ''); // tomma () efter rensning
+
+    /* ==== 5) Lägg till max EN kuraterad tjänstelänk (om vi inte redan länkade inline) ==== */
     const linkKeysInOrder = ["lokal seo", "seo", "wordpress", "wordpress-underhåll", "underhåll", "webbdesign", "annonsering"];
     let addedServiceLink = false;
     for (const k of linkKeysInOrder) {
       const url = LINKS[k];
-      if (lower.includes(k) && !reply.includes(url)) {
-        const label =
-          k === 'lokal seo' ? 'Lokal SEO' :
-          k === 'seo' ? 'SEO' :
-          (k.startsWith('wordpress') || k === 'underhåll') ? 'WordPress-underhåll' :
-          k;
-        // Lägg bara till om URL:en finns i sitemap (säkerhetsnät)
+      if (lower.includes(k) && !reply.includes(url) && !inlineLinkedKeys.has(k)) {
+        const label = canonicalLabel(k);
         if (sitemapUrls.has(url)) {
           reply += `\n\n📖 Läs mer om ${label}: [${url}](${url})`;
           addedServiceLink = true;
@@ -251,17 +270,17 @@ Format:
       }
     }
 
-    // Fallback: om text/intent handlar om "tjänster" eller flera områden → länka till översikt
+    // Fallback till tjänsteöversikt om “tjänster” nämns och ingen specifik länk lades
     if (!addedServiceLink && /\btjänster\b/i.test(lower) && !reply.includes(SERVICES_OVERVIEW) && sitemapUrls.has(SERVICES_OVERVIEW)) {
       reply += `\n\n📖 Se en översikt av våra tjänster: [${SERVICES_OVERVIEW}](${SERVICES_OVERVIEW})`;
     }
 
-    /* ==== 3) Informationsintention → blogglänk (om inte redan) ==== */
+    /* ==== 6) Informationsintention → blogglänk (om inte redan) ==== */
     if (infoTriggers.test(lower) && !reply.includes(BLOG_URL) && sitemapUrls.has(BLOG_URL)) {
       reply += `\n\n💡 Vill du läsa fler tips och guider? Kolla vår [blogg](${BLOG_URL}) för mer inspiration.`;
     }
 
-    /* ==== 4) Lead-intention → rätt gratis-analys (utan dubbletter) ==== */
+    /* ==== 7) Lead-intention → rätt gratis-analys (utan dubbletter) ==== */
     if (leadTriggers.test(lower) || lower.includes('lokal seo')) {
       const isLocal = lower.includes('lokal seo');
       const ctaUrl = isLocal ? LEAD_LOCAL_URL : LEAD_SEO_URL;
