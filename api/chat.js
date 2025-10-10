@@ -110,13 +110,16 @@ Format:
       completion?.choices?.[0]?.message?.content?.trim() ||
       'Jag är osäker just nu. Vill du omformulera frågan?';
 
-    // --- Smart hybrid linking: tjänst + blogg + lead-widgets ---
+    // --- Known/allowed links (endast dessa får förekomma) ---
     const LINKS = {
-      "seo": "https://webbyrasigtuna.se/sokmotoroptimering/",
+      // Ordningen spelar roll: "lokal seo" först så att den får prioritet över generisk "seo"
       "lokal seo": "https://webbyrasigtuna.se/hjalp-med-lokal-seo/",
+      "seo": "https://webbyrasigtuna.se/sokmotoroptimering/",
       "webbdesign": "https://webbyrasigtuna.se/webbdesign/",
+      // WordPress-underhåll/underhåll
       "wordpress": "https://webbyrasigtuna.se/webbplatsunderhall/",
       "underhåll": "https://webbyrasigtuna.se/webbplatsunderhall/",
+      "wordpress-underhåll": "https://webbyrasigtuna.se/webbplatsunderhall/",
       "annonsering": "https://webbyrasigtuna.se/digital-annonsering/"
     };
     const BLOG_URL = "https://webbyrasigtuna.se/blogg/";
@@ -129,24 +132,52 @@ Format:
 
     const lower = message.toLowerCase();
 
-    // 1️⃣ Länka relevant tjänstesida
-    for (const [key2, url] of Object.entries(LINKS)) {
-      if (lower.includes(key2)) {
-        reply += `\n\n📖 Läs mer om ${key2}: [${url}](${url})`;
+    // === 1) Sanera modellens fria text: normalisera termer och ta bort okända länkar ===
+    // a) Normalisera vanliga termer (först "Lokal SEO", sedan generella)
+    reply = reply
+      .replace(/\blokal seo\b/gi, 'Lokal SEO')
+      .replace(/\bseo\b/gi, 'SEO')
+      .replace(/\bwordpress\b/gi, 'WordPress');
+
+    // b) Tillåt endast våra kända länkar (ta bort övriga URL:er modellen kan ha hittat på)
+    const allowedUrlSet = new Set([
+      ...Object.values(LINKS),
+      BLOG_URL,
+      LEAD_LOCAL_URL,
+      LEAD_SEO_URL,
+    ]);
+    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (url) => {
+      // behåll bara om den finns i allowlist
+      return allowedUrlSet.has(url) ? url : '';
+    }).replace(/\(\s*\)/g, ''); // städa tomma () om modellen använde markdown-länkar
+
+    // === 2) Lägg till EN (1) tjänstelänk beroende på fråga (utan dubbletter) ===
+    // Prioritera "lokal seo" före "seo"; därefter övriga.
+    const linkKeysInOrder = ["lokal seo", "seo", "wordpress", "wordpress-underhåll", "underhåll", "webbdesign", "annonsering"];
+    for (const key2 of linkKeysInOrder) {
+      const url = LINKS[key2];
+      if (lower.includes(key2) && !reply.includes(url)) {
+        reply += `\n\n📖 Läs mer om ${key2 === 'wordpress' || key2 === 'wordpress-underhåll' || key2 === 'underhåll'
+          ? 'WordPress-underhåll'
+          : (key2 === 'seo' ? 'SEO' : (key2 === 'lokal seo' ? 'Lokal SEO' : key2))
+        }: [${url}](${url})`;
         break;
       }
     }
 
-    // 2️⃣ Informationsintention → föreslå bloggen
-    if (infoTriggers.test(lower)) {
+    // === 3) Informationsintention → föreslå bloggen (om inte redan med i svaret) ===
+    if (infoTriggers.test(lower) && !reply.includes(BLOG_URL)) {
       reply += `\n\n💡 Vill du läsa fler tips och guider? Kolla vår [blogg](${BLOG_URL}) för mer inspiration.`;
     }
 
-    // 3️⃣ Lead-intention → föreslå rätt gratis-analys
+    // === 4) Lead-intention → föreslå rätt gratis-analys (utan dubbletter) ===
     if (leadTriggers.test(lower) || lower.includes('lokal seo')) {
-      const ctaUrl = lower.includes('lokal seo') ? LEAD_LOCAL_URL : LEAD_SEO_URL;
-      const ctaLabel = lower.includes('lokal seo') ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
-      reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
+      const isLocal = lower.includes('lokal seo');
+      const ctaUrl = isLocal ? LEAD_LOCAL_URL : LEAD_SEO_URL;
+      const ctaLabel = isLocal ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
+      if (!reply.includes(ctaUrl)) {
+        reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
+      }
     }
 
     // === Persist back to KV ===
