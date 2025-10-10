@@ -106,8 +106,8 @@ async function loadPostUrls() {
 /* ===== Svensk tokenisering för bloggmappning ===== */
 const STOPWORDS = new Set([
   'och','att','som','för','med','en','ett','det','den','de','vi','ni','jag','hur','varför','tips','om','till','på','i','av','er','era','vår','vårt','våra',
-  'din','ditt','dina','han','hon','man','min','mitt','mina','era','deras','från','mer','mindre','utan','eller','så','också','kan','ska',
-  'få','får','var','är','bli','blir','nya','ny','din','dina'
+  'din','ditt','dina','han','hon','man','min','mitt','mina','deras','från','mer','mindre','utan','eller','så','också','kan','ska',
+  'få','får','var','är','bli','blir','nya','ny'
 ]);
 function tokenizeSv(s) {
   return (s || '')
@@ -124,7 +124,7 @@ function prettyFromSlug(url) {
     const segs = u.pathname.split('/').filter(Boolean);
     let s = decodeURIComponent(segs[segs.length - 1] || '');
 
-    s = s.replace(/-/g, ' ').toLowerCase(); // “sa gor du lokal seo”
+    s = s.replace(/-/g, ' ').toLowerCase();
     s = s.replace(/\s+/g, ' ').trim();
 
     if (s) s = s.charAt(0).toUpperCase() + s.slice(1);
@@ -259,7 +259,7 @@ Format:
     const inlineLinkedKeys = new Set();
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
       const mapped = mapLabel(labelRaw);
-      if (!mapped) return labelRaw; // lämna ren text (vi tar bort klamrar sist om det behövs)
+      if (!mapped) return labelRaw; // lämna ren text (rensar klamrar sist om det behövs)
       const url = LINKS[mapped.key];
       if (url && sitemapUrls.has(url)) {
         inlineLinkedKeys.add(mapped.key);
@@ -268,17 +268,22 @@ Format:
       return labelRaw;
     });
 
-    /* === 2) “här: <Etikett>” → länk på hela etiketten (inkl. -tjänster) === */
+    /* === 2) “här: <Etikett>” → länk på etiketten (inkl. -tjänster) === */
     reply = reply.replace(
       /(här\s*:\s*)(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)(\.)?/gi,
       (m, lead, labelRaw, dot) => {
         const mapped = mapLabel(labelRaw);
-        if (!mapped) return m;
-        const url = LINKS[mapped.key];
-        if (!url || !sitemapUrls.has(url)) return m;
+        const url = mapped && LINKS[mapped.key];
+        if (!mapped || !url || !sitemapUrls.has(url)) return m;
         inlineLinkedKeys.add(mapped.key);
         return `${lead}[${mapped.display}](${url})${dot || ''}`;
       }
+    );
+
+    /* === 2b) Ta bort dublettfraser efter länkning: "… [X](url) här: X." → behåll bara länken === */
+    reply = reply.replace(
+      /(\[[^\]]+\]\([^)]+\))\s*här\s*:\s*(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign|Annonsering)\./gi,
+      '$1.'
     );
 
     /* === 3) “Läs mer … <Etikett>.” (utan “här:”) → länk === */
@@ -286,9 +291,8 @@ Format:
       /(Läs\s+mer[^.\n]*?)\b(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)\b(\.)?/gi,
       (m, lead, labelRaw, dot) => {
         const mapped = mapLabel(labelRaw);
-        if (!mapped) return m;
-        const url = LINKS[mapped.key];
-        if (!url || !sitemapUrls.has(url)) return m;
+        const url = mapped && LINKS[mapped.key];
+        if (!mapped || !url || !sitemapUrls.has(url)) return m;
         inlineLinkedKeys.add(mapped.key);
         return `${lead}[${mapped.display}](${url})${dot || ''}`;
       }
