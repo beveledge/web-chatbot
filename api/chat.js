@@ -71,22 +71,28 @@ export default async function handler(req, res) {
     const system = {
       role: 'system',
       content: `
-Du är Webbyrå Sigtunas digitala assistent. 
-Ditt uppdrag är att hjälpa besökare att förstå våra tjänster inom webbdesign, SEO, digital marknadsföring och strategisk utveckling. 
-Du svarar alltid på svenska, med ett professionellt och engagerande tonfall — vänligt, kunnigt och framåtblickande. 
+Du är Webbyrå Sigtunas kunskapsdrivna marknadsassistent.
 
-### Dina mål:
-1. Hjälp användaren att förstå hur vi kan lösa deras behov eller frågor på ett tydligt och effektivt sätt.
-2. Hänvisa gärna till en relevant tjänst eller sida på webbyrasigtuna.se när det passar.
-3. Föreslå gärna att boka ett möte med Andreas när det verkar naturligt – till exempel om användaren uttrycker intresse eller behöver mer personlig rådgivning.
+Mål:
+1) Ge korrekta, begripliga svar om webb, SEO, lokal SEO, WordPress/underhåll, annonsering och våra tjänster.
+2) Hjälp användaren vidare med relevanta länkar till webbyrasigtuna.se (om möjligt).
+3) När användaren uttrycker intresse (t.ex. pris, offert, ny webb, SEO, strategi, analys): föreslå att boka ett möte med Andreas på ett naturligt sätt.
+4) Håll tonen professionell, vänlig och framåtblickande – på svenska.
 
-### Begränsningar:
-- Prata inte om att du är en AI-modell eller tränad på data.
-- Svara inte på ämnen utanför digital marknadsföring, webb, SEO, eller relaterade tjänster.
-- Om något ligger utanför ditt område, säg artigt att det inte är ditt expertområde och föreslå kontakt med oss istället.
+Begränsningar:
+- Gå inte utanför ovanstående områden. Hänvisa artigt till kontakt om något ligger utanför.
+- Påstå inte att du “har träningsdata”; beskriv istället att du baserar svar på vårt innehåll och generell branschkunskap.
+- Om du är osäker: be om förtydligande eller föreslå ett kort möte.
 
-Om användaren nämner ord som pris, offert, projekt, ny hemsida eller SEO, föreslå att boka ett möte.
-Avsluta gärna dina svar med en positiv och uppmuntrande ton, i linje med Webbyrå Sigtunas varumärke.
+Svarsstruktur (när det passar):
+- Kort kärnförklaring (2–5 meningar).
+- Punktlista med 2–4 konkreta råd eller steg.
+- “Läs mer”: 1–2 relevanta länkar till webbyrasigtuna.se.
+- Avsluta med en mjuk CTA om läget är rätt (t.ex. boka möte eller snabb analys).
+
+Format:
+- Använd korta stycken, tydliga listor, och länka så här: [Sidnamn](https://…).
+- Undvik onödigt långt svar; prioritera klarhet och nästa steg.
       `.trim(),
     };
 
@@ -104,14 +110,60 @@ Avsluta gärna dina svar med en positiv och uppmuntrande ton, i linje med Webbyr
       completion?.choices?.[0]?.message?.content?.trim() ||
       'Jag är osäker just nu. Vill du omformulera frågan?';
 
+// --- Smart hybrid linking: tjänst + blogg + lead-widgets ---
+const LINKS = {
+  "seo": "https://webbyrasigtuna.se/sokmotoroptimering/",
+  "lokal seo": "https://webbyrasigtuna.se/hjalp-med-lokal-seo/",
+  "webbdesign": "https://webbyrasigtuna.se/webbdesign/",
+  "wordpress": "https://webbyrasigtuna.se/webbplatsunderhall/",
+  "underhåll": "https://webbyrasigtuna.se/webbplatsunderhall/",
+  "annonsering": "https://webbyrasigtuna.se/digital-annonsering/"
+};
+
+const BLOG_URL = "https://webbyrasigtuna.se/blogg/";
+const LEAD_LOCAL_URL = "https://webbyrasigtuna.se/gratis-lokal-seo-analys/";
+const LEAD_SEO_URL   = "https://webbyrasigtuna.se/gratis-seo-analys/";
+
+// Intent-signaler
+const infoTriggers = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet)/i;
+const leadTriggers = /(pris|offert|strategi|analys|möte|projekt|erbjudande|paket|audit|granskning)/i;
+
+const lower = message.toLowerCase();
+
+// 1️⃣ Länka relevant tjänstesida
+for (const [key, url] of Object.entries(LINKS)) {
+  if (lower.includes(key)) {
+    reply += `\n\n📖 Läs mer om ${key}: [${url}](${url})`;
+    break;
+  }
+}
+
+// 2️⃣ Informationsintention → föreslå bloggen
+if (infoTriggers.test(lower)) {
+  reply += `\n\n💡 Vill du läsa fler tips och guider? Kolla vår [blogg](${BLOG_URL}) för mer inspiration.`;
+}
+
+// 3️⃣ Lead-intention → föreslå rätt gratis-analys
+if (leadTriggers.test(lower) || lower.includes('lokal seo')) {
+  const ctaUrl = lower.includes('lokal seo') ? LEAD_LOCAL_URL : LEAD_SEO_URL;
+  const ctaLabel = lower.includes('lokal seo') ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
+  reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
+}
+
     // === Persist back to KV ===
     await kv.rpush(key, JSON.stringify({ role: 'user', content: message }));
     await kv.rpush(key, JSON.stringify({ role: 'assistant', content: reply }));
     await kv.expire(key, 60 * 60 * 24 * 7); // 7 dagar
 
-    const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
+    // Enkel bokningsintention
+const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
 
-    return res.status(200).json({ reply, booking_intent });
+// Lead-intention (t.ex. offert, analys, strategi, etc.)
+const lead_intent =
+  lower.includes('lokal seo') || leadTriggers.test(lower);
+
+// Skicka tillbaka till frontend
+return res.status(200).json({ reply, booking_intent, lead_intent });
   } catch (err) {
     console.error('Chat error:', err);
     return res.status(500).json({ error: 'Server error' });
