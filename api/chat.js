@@ -222,14 +222,13 @@ export default async function handler(req, res) {
     const history = (raw || []).map(s => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
     const trimmed = history.slice(-20);
 
-    // Ladda sitemap & inlägg
+    // Ladda sitemap & inlägg & LLMS
     const [sitemapUrls, postUrls, llms] = await Promise.all([
       loadSitemapUrls(),
       loadPostUrls(),
       loadLLMSBundle()
     ]);
 
-    // Extra LLMS-kontekst till systemprompten
     const llmsContext = `
 [LLMS-index]
 ${(llms.indexTxt || '').slice(0, 1000)}
@@ -316,12 +315,12 @@ ${llmsContext}
     const inlineLinkedKeys = new Set();
 
     /* === FIX 1: orphan [SEO] + suffix “-tjänster” → länka korrekt === */
-    reply = reply.replace(/\[(SEO)\]\s*[–-]?\s*tja?nster/gi, (m, _kw) => {
+    reply = reply.replace(/\[(SEO)\]\s*[–-]?\s*tja?nster/gi, () => {
       const url = LINKS['seo']; if (!sitemapUrls.has(url)) return 'SEO-tjänster';
       inlineLinkedKeys.add('seo');
       return `[SEO-tjänster](${url})`;
     });
-    reply = reply.replace(/\[(Lokal\s*SEO)\]\s*[–-]?\s*tja?nster/gi, (m, _kw) => {
+    reply = reply.replace(/\[(Lokal\s*SEO)\]\s*[–-]?\s*tja?nster/gi, () => {
       const url = LINKS['lokal seo']; if (!sitemapUrls.has(url)) return 'Lokal SEO-tjänster';
       inlineLinkedKeys.add('lokal seo');
       return `[Lokal SEO-tjänster](${url})`;
@@ -373,15 +372,34 @@ ${llmsContext}
       .replace(/\[(SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[SEO-tjänster]($2)')
       .replace(/\[(Lokal SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[Lokal SEO-tjänster]($2)');
 
-    /* Rensa råa URL:er som inte finns i sitemap (behåll bara whitelistan) */
-    const allUrls = new Set([
-      ...[...reply.matchAll(/\]\((https?:\/\/[^\s)]+)\)/gi)].map(m => m[1]),
-      ...[...reply.matchAll(/https?:\/\/[^\s)\]]+/gi)].map(m => m[0]),
-    ]);
-    const toKeep = new Set([...allUrls].filter(u => sitemapUrls.has(u)));
-    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => (toKeep.has(u) ? u : ''));
-    reply = reply.replace(/\(\s*\)/g, ''); // tomma parenteser
-    reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1'); // ensam slutparentes
+    /* === FIX 5b: SÄKER RÅ-URL-STÄDNING (ny) ===
+       - Låt markdown-länkar vara ifred
+       - Ta bort RÅA externa länkar
+       - Behåll RÅA interna länkar (även om inte exakt i sitemap) */
+    const mdUrlMatches = [...reply.matchAll(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/gi)];
+    const mdUrls = new Set(mdUrlMatches.map(m => m[1]));
+    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u, off, str) => {
+      // Om URL:en redan är inne i en markdown-länk: rör inte
+      if (mdUrls.has(u)) return u;
+
+      // Heuristik: om direkt före är "](" betraktar vi den som del av en länk
+      const prev = str.slice(Math.max(0, off - 2), off);
+      if (prev === '](') return u;
+
+      // Ta bort externa råa länkar
+      try {
+        const host = new URL(u).hostname.replace(/^www\./,'');
+        if (!host.endsWith('webbyrasigtuna.se')) return '';
+      } catch { return ''; }
+
+      // Intern rå URL: behåll
+      return u;
+    });
+
+    // Städa tomma parenteser som blev över
+    reply = reply.replace(/\(\s*\)/g, '');
+    // Ensam slutparentes efter kända ord
+    reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1');
 
     /* Kuraterad tjänstelänk om inget redan satts */
     const order = ['lokal seo', 'seo', 'wordpress', 'wordpress-underhåll', 'underhåll', 'webbdesign', 'annonsering'];
@@ -406,7 +424,7 @@ ${llmsContext}
     }
 
     /* Informationsintention → relaterade inlägg eller blogg */
-    const infoTriggered = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet)/i.test(lower);
+    const infoTriggered = infoTriggers.test(lower);
     if (infoTriggered) {
       const qTokens = tokenizeSv(lower);
       const scored = [];
@@ -441,13 +459,14 @@ ${llmsContext}
       }
     }
 
-    /* Lead-intention → gratis-analys */
-    const leadTriggered = leadTriggers.test(lower) || lower.includes('lokal seo');
+    /* Lead-intention → gratis-analys (inkl. generiska förbättra/optimera/öka SEO) */
+    const genericSeoImprove = /\bseo\b.*\b(förbättra|optimera|öka)\b/i.test(lower);
+    const leadTriggered = leadTriggers.test(lower) || lower.includes('lokal seo') || genericSeoImprove;
     if (leadTriggered) {
       const isLocal = lower.includes('lokal seo');
       const ctaUrl = isLocal ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/' : 'https://webbyrasigtuna.se/gratis-seo-analys/';
       const ctaLabel = isLocal ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
-      if (!reply.includes(ctaUrl) && sitemapUrls.has(ctaUrl)) {
+      if (!reply.includes(ctaUrl) && (await loadSitemapUrls()).has(ctaUrl)) {
         reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
       }
     }
@@ -455,7 +474,7 @@ ${llmsContext}
     // Sista safety: ta bort kvarvarande orphan-hakparenteser
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, '$1');
 
-    // Eventuell "Källa" när vi faktiskt har lagt in en intern länk
+    // “Källa” när vi faktiskt har lagt in en intern länk
     if (ADD_SOURCE_FOOTER) {
       const hasInternalLink = /\]\(https:\/\/(?:www\.)?webbyrasigtuna\.se\/[^)]+\)/i.test(reply);
       if (hasInternalLink && !/Källa:\s*Webbyrå Sigtuna/i.test(reply)) {
