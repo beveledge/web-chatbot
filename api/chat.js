@@ -288,6 +288,23 @@ ${llmsContext}
       completion?.choices?.[0]?.message?.content?.trim() ||
       'Jag är osäker just nu. Vill du omformulera frågan?';
 
+/* --- Pre-normalize links coming from the model --- */
+
+// 1) Convert any HTML anchors to Markdown so the widget can safely render them
+reply = reply.replace(
+  /<a\s+href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a>/gi,
+  '[$2]($1)'
+);
+
+// 2) Fix "( [Label] ) (https://…)" or "(Label) (https://…)" → "[Label](https://…)"
+reply = reply.replace(
+  /\(\s*\[?([A-Za-zÅÄÖåäö0-9 .,:;+\-_/&%€$@!?]+?)\]?\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/g,
+  '[$1]($2)'
+);
+
+// 3) If the model produced bare "(https://…)" just drop the stray parens
+reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
+
     /* ---------- Normalisering ---------- */
     reply = reply
       .replace(/\u00A0/g, ' ')                    // NBSP → space
