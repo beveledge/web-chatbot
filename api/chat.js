@@ -1,4 +1,4 @@
-// /api/chat.js
+// /api/chat.js — v5.0.6
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 
@@ -201,7 +201,9 @@ function mapLabel(labelRaw = '') {
   if (norm.includes('webbdesign'))  return { key: 'webbdesign', display: 'Webbdesign' };
   if (norm.includes('tjänster'))    return { key: 'tjänster',   display: 'Tjänster' };
   if (norm.includes('annonsering')) return { key: 'annonsering', display: 'Annonsering' };
-  if (norm.includes('priser')) return { key: 'priser', display: 'Priser' };
+  if (norm.includes('priser'))      return { key: 'priser', display: 'Priser' };
+  if (norm.includes('webbanalys'))  return { key: 'webbanalys', display: 'Webbanalys' };
+  if (norm.includes('digital'))     return { key: 'annonsering', display: 'Digital marknadsföring' }; // fallback
   return null;
 }
 
@@ -289,22 +291,28 @@ ${llmsContext}
       completion?.choices?.[0]?.message?.content?.trim() ||
       'Jag är osäker just nu. Vill du omformulera frågan?';
 
-/* --- Pre-normalize links coming from the model --- */
+    /* --- Pre-normalize links coming from the model --- */
 
-// 1) Convert any HTML anchors to Markdown so the widget can safely render them
-reply = reply.replace(
-  /<a\s+href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a>/gi,
-  '[$2]($1)'
-);
+    // 1) Convert any HTML anchors to Markdown so the widget can safely render them
+    reply = reply.replace(
+      /<a\s+href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a>/gi,
+      '[$2]($1)'
+    );
 
-// 2) Fix "( [Label] ) (https://…)" or "(Label) (https://…)" → "[Label](https://…)"
-reply = reply.replace(
-  /\(\s*\[?([A-Za-zÅÄÖåäö0-9 .,:;+\-_/&%€$@!?]+?)\]?\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/g,
-  '[$1]($2)'
-);
+    // 2) Fix "( [Label] ) (https://…)" or "(Label) (https://…)" → "[Label](https://…)"
+    reply = reply.replace(
+      /\(\s*\[?([A-Za-zÅÄÖåäö0-9 .,:;+\-_/&%€$@!?]+?)\]?\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/g,
+      '[$1]($2)'
+    );
 
-// 3) If the model produced bare "(https://…)" just drop the stray parens
-reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
+    // 3) If the model produced bare "(https://…)" just drop the stray parens
+    reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
+
+    // 3b) Collapse accidental double-wrapped links like [[Label](url)](url)
+    reply = reply.replace(
+      /\[\s*\[([^\]]+)\]\s*\(\s*(https?:\/\/[^)]+)\s*\)\s*\]\s*\(\s*\2\s*\)/gi,
+      '[$1]($2)'
+    );
 
     /* ---------- Normalisering ---------- */
     reply = reply
@@ -325,6 +333,7 @@ reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
       'tjänster': 'https://webbyrasigtuna.se/vara-digitala-marknadsforingstjanster/',
       'blogg': 'https://webbyrasigtuna.se/blogg/',
       'priser': 'https://webbyrasigtuna.se/priser/',
+      'webbanalys': 'https://webbyrasigtuna.se/webbanalys/',
     };
 
     const infoTriggers = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet)/i;
@@ -345,7 +354,7 @@ reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
       return `[Lokal SEO-tjänster](${url})`;
     });
 
-    /* === FIX 2: orphan-etiketter [SEO] / [Lokal SEO] → länka === */
+    /* === FIX 2: orphan-etiketter [SEO] / [Lokal SEO] / etc → länka === */
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, (m, labelRaw) => {
       const mapped = mapLabel(labelRaw);
       if (!mapped) return labelRaw;
@@ -359,30 +368,27 @@ reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
 
     /* === FIX 3: “här: <Etikett>” → gör etiketten klickbar (utan dubbelt efteråt) === */
     reply = reply.replace(
-      /(här\s*:\s*)(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)\b(\.)?/gi,
-      (m, lead, labelRaw, dot) => {
+      /(här\s*:\s*)(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering|Priser|Webbanalys)\b(\.)?/gi,
+      (m, leadText, labelRaw, dot) => {
         const mapped = mapLabel(labelRaw);
         const url = mapped && LINKS[mapped.key];
         if (!mapped || !url || !sitemapUrls.has(url)) return m;
         inlineLinkedKeys.add(mapped.key);
-        return `${lead}[${mapped.display}](${url})${dot || ''}`;
+        return `${leadText}[${mapped.display}](${url})${dot || ''}`;
       }
     );
     // ta bort ev. “här: <Etikett>” som hänger kvar efter länk
-    reply = reply.replace(
-      /(\[[^\]]+\]\([^)]+\)[^.]*?)\s+här\s*:\s*[^.\n]+(\.)/gi,
-      '$1$2'
-    );
+    reply = reply.replace(/(\[[^\]]+\]\([^)]+\)[^.]*?)\s+här\s*:\s*[^.\n]+(\.)/gi, '$1$2');
 
     /* === FIX 4: “Läs mer … <Etikett>.” (utan “här:”) → länk === */
     reply = reply.replace(
-      /(Läs\s+mer[^.\n]*?)\b(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering)\b(\.)?/gi,
-      (m, lead, labelRaw, dot) => {
+      /(Läs\s+mer[^.\n]*?)\b(Lokal SEO(?:[–-]tja?nster)?|SEO(?:[–-]tja?nster)?|WordPress(?:[–-]underhåll)?|Underhåll|Webbdesign|Tjänster|Annonsering|Priser|Webbanalys)\b(\.)?/gi,
+      (m, leadText, labelRaw, dot) => {
         const mapped = mapLabel(labelRaw);
         const url = mapped && LINKS[mapped.key];
         if (!mapped || !url || !sitemapUrls.has(url)) return m;
         inlineLinkedKeys.add(mapped.key);
-        return `${lead}[${mapped.display}](${url})${dot || ''}`;
+        return `${leadText}[${mapped.display}](${url})${dot || ''}`;
       }
     );
 
@@ -396,39 +402,37 @@ reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
       const mdUrlMatches = [...reply.matchAll(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/gi)];
       const mdUrls = new Set(mdUrlMatches.map(m => m[1]));
       reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u, off, str) => {
-        if (mdUrls.has(u)) return u;
+        if (mdUrls.has(u)) return u;                  // redan i markdown
         const prev = str.slice(Math.max(0, off - 2), off);
-        if (prev === '](') return u;
+        if (prev === '](') return u;                  // precis efter ](
         try {
           const host = new URL(u).hostname.replace(/^www\./,'');
-          if (!host.endsWith('webbyrasigtuna.se')) return '';
+          if (!host.endsWith('webbyrasigtuna.se')) return ''; // döda externa råa URL:er
         } catch { return ''; }
-        return u; // intern rå URL behålls
+        return u; // intern rå URL behålls (konverteras i nästa steg)
       });
     }
 
-    /* === FIX 5c: kollapsa parentetiska "[Label] (url)"-mönster till riktig markdown === */
-    // (a) "([Label]) (url)" -> "[Label](url)"
+    /* === FIX 5c: konvertera interna råa URL:er till länk med föregående etikett (om möjligt) === */
     reply = reply.replace(
-      /\(\s*\[([^\]]+)\]\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/gi,
-      '[$1]($2)'
+      /(\b(?:Webbdesign|Sökmotoroptimering|SEO|Digital(?:\s+Marknadsföring)?|Annonsering|Tjänster|Priser|WordPress(?:-underhåll)?|Underhåll|Webbanalys)\b)\s+(https?:\/\/(?:www\.)?webbyrasigtuna\.se\/[^\s)]+)/gi,
+      (_m, label, url) => {
+        const mapped = mapLabel(label) || { display: label };
+        return `[${mapped.display}](${url})`;
+      }
     );
-    // (b) "Some Label ([anything]) (url)" -> "[Some Label](url)"
-    reply = reply.replace(
-      /([^\[\]\n()]+?)\s*\(\s*[^()]+\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/gi,
-      (_m, label, url) => `[${label.trim()}](${url})`
-    );
-    // (c) städa kvarvarande "([Label])" utan url
-    reply = reply.replace(/\(\s*\[[^\]]+\]\s*\)/gi, '');
 
-    /* === FIX 5d: små-säkerheter === */
+    // 5d) Städa “([Label]) (url)” varianter → “[Label](url)”
+    reply = reply.replace(/\(\s*\[([^\]]+)\]\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/gi, '[$1]($2)');
+
     // tomma parenteser
     reply = reply.replace(/\(\s*\)/g, '');
-    // skydda mot hopfogning "Tjänsterhttps://..." → "Tjänster https://..."
-    reply = reply.replace(/(Tjänster)(?=https?:\/\/)/gi, '$1 ');
+
+    // Ensam slutparentes efter kända ord (ex. “SEO)”)
+    reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1');
 
     /* Kuraterad tjänstelänk om inget redan satts */
-    const order = ['lokal seo', 'seo', 'wordpress', 'wordpress-underhåll', 'underhåll', 'webbdesign', 'annonsering'];
+    const order = ['lokal seo', 'seo', 'wordpress', 'wordpress-underhåll', 'underhåll', 'webbdesign', 'annonsering', 'priser'];
     let addedServiceLink = false;
     for (const k of order) {
       const url = LINKS[k];
