@@ -201,6 +201,7 @@ function mapLabel(labelRaw = '') {
   if (norm.includes('webbdesign'))  return { key: 'webbdesign', display: 'Webbdesign' };
   if (norm.includes('tjänster'))    return { key: 'tjänster',   display: 'Tjänster' };
   if (norm.includes('annonsering')) return { key: 'annonsering', display: 'Annonsering' };
+  if (norm.includes('priser')) return { key: 'priser', display: 'Priser' };
   return null;
 }
 
@@ -323,6 +324,7 @@ reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
       'annonsering': 'https://webbyrasigtuna.se/digital-annonsering/',
       'tjänster': 'https://webbyrasigtuna.se/vara-digitala-marknadsforingstjanster/',
       'blogg': 'https://webbyrasigtuna.se/blogg/',
+      'priser': 'https://webbyrasigtuna.se/priser/',
     };
 
     const infoTriggers = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet)/i;
@@ -422,8 +424,6 @@ reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
     /* === FIX 5d: små-säkerheter === */
     // tomma parenteser
     reply = reply.replace(/\(\s*\)/g, '');
-    // ensam slutparentes efter kända ord
-    reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1');
     // skydda mot hopfogning "Tjänsterhttps://..." → "Tjänster https://..."
     reply = reply.replace(/(Tjänster)(?=https?:\/\/)/gi, '$1 ');
 
