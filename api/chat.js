@@ -28,6 +28,21 @@ function setCors(req, res) {
   }
 }
 
+/* ========== Config för LLMs-filer ========== */
+const LLMS_BASE         = 'https://webbyrasigtuna.se';
+const LLMS_INDEX_URL    = `${LLMS_BASE}/llms.txt`;
+const LLMS_FULL_URL     = `${LLMS_BASE}/llms-full.txt`;
+const LLMS_FULL_SV_URL  = `${LLMS_BASE}/llms-full-sv.txt`;
+const LLMS_TTL          = 60 * 60 * 12; // 12h cache
+
+const LLMS_INDEX_KEY    = 'llms:index';
+const LLMS_FULL_KEY     = 'llms:full';
+const LLMS_FULL_SV_KEY  = 'llms:full_sv';
+
+// Hur mycket kontext vi vågar injicera i systemprompten
+const LLMS_MAX_CHARS_PER_BLOCK = 2000; // ca 400–600 tokens
+const ADD_SOURCE_FOOTER = true;        // “Källa: …” när interna länkar finns
+
 /* ========== Sitemap-cache & helpers ========== */
 const SITEMAP_INDEX = 'https://webbyrasigtuna.se/sitemaps.xml';
 const SITEMAP_FALLBACKS = [
@@ -39,7 +54,7 @@ const POSTS_CACHE_KEY   = 'sitemap:posts';
 const SITEMAP_TTL       = 60 * 60 * 24; // 24h
 
 async function fetchText(url) {
-  const r = await fetch(url);
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`${url} -> ${r.status}`);
   return await r.text();
 }
@@ -101,6 +116,33 @@ async function loadPostUrls() {
   postUrls = filterHost(postUrls);
   try { await kv.set(POSTS_CACHE_KEY, postUrls, { ex: SITEMAP_TTL }); } catch {}
   return postUrls;
+}
+
+/* ========== LLMS-hämtning & cache ========== */
+async function loadKVOrFetch(key, url, ttlSeconds) {
+  try {
+    const cached = await kv.get(key);
+    if (typeof cached === 'string' && cached.length) return cached;
+  } catch {}
+  try {
+    const text = await fetchText(url);
+    await kv.set(key, text, { ex: ttlSeconds });
+    return text;
+  } catch {
+    return ''; // fail soft
+  }
+}
+
+async function loadLLMSBundle() {
+  const [indexTxt, fullTxt, fullSvTxt] = await Promise.all([
+    loadKVOrFetch(LLMS_INDEX_KEY,   LLMS_INDEX_URL,   LLMS_TTL),
+    loadKVOrFetch(LLMS_FULL_KEY,    LLMS_FULL_URL,    LLMS_TTL),
+    loadKVOrFetch(LLMS_FULL_SV_KEY, LLMS_FULL_SV_URL, LLMS_TTL),
+  ]);
+  // begränsa längd
+  const svPart   = (fullSvTxt || '').slice(0, LLMS_MAX_CHARS_PER_BLOCK);
+  const fullPart = (fullTxt   || '').slice(0, LLMS_MAX_CHARS_PER_BLOCK);
+  return { indexTxt, fullPart, svPart };
 }
 
 /* ========== Svenska hjälp-funktioner ========== */
@@ -180,6 +222,25 @@ export default async function handler(req, res) {
     const history = (raw || []).map(s => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
     const trimmed = history.slice(-20);
 
+    // Ladda sitemap & inlägg
+    const [sitemapUrls, postUrls, llms] = await Promise.all([
+      loadSitemapUrls(),
+      loadPostUrls(),
+      loadLLMSBundle()
+    ]);
+
+    // Extra LLMS-kontekst till systemprompten
+    const llmsContext = `
+[LLMS-index]
+${(llms.indexTxt || '').slice(0, 1000)}
+
+[LLMS-sammanfattning (EN)]
+${llms.fullPart}
+
+[LLMS-språk-stil (SV)]
+${llms.svPart}
+`.trim();
+
     // Systemprompt
     const system = {
       role: 'system',
@@ -206,6 +267,11 @@ Svarsstruktur (när det passar):
 Format:
 - Använd korta stycken, tydliga listor, och länka så här: [Sidnamn](https://…).
 - Undvik onödigt långt svar; prioritera klarhet och nästa steg.
+
+Primär kunskapsbas:
+- Använd innehållet från llms.txt / llms-full.txt / llms-full-sv.txt på webbyrasigtuna.se (kontekst nedan) som prioriterad källa när du svarar om våra tjänster, blogg eller expertis.
+
+${llmsContext}
 `.trim(),
     };
 
@@ -230,9 +296,6 @@ Format:
       .replace(/\blokal seo\b/gi, 'Lokal SEO')
       .replace(/\bseo\b/gi, 'SEO')
       .replace(/\bwordpress\b/gi, 'WordPress');
-
-    const sitemapUrls = await loadSitemapUrls();
-    const postUrls    = await loadPostUrls();
 
     const LINKS = {
       'lokal seo': 'https://webbyrasigtuna.se/hjalp-med-lokal-seo/',
@@ -318,8 +381,7 @@ Format:
     const toKeep = new Set([...allUrls].filter(u => sitemapUrls.has(u)));
     reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u) => (toKeep.has(u) ? u : ''));
     reply = reply.replace(/\(\s*\)/g, ''); // tomma parenteser
-    // === FIX 6: ta bort ”ensam slutparentes” efter ord (t.ex. “lokal SEO)”)
-    reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1');
+    reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1'); // ensam slutparentes
 
     /* Kuraterad tjänstelänk om inget redan satts */
     const order = ['lokal seo', 'seo', 'wordpress', 'wordpress-underhåll', 'underhåll', 'webbdesign', 'annonsering'];
@@ -339,11 +401,13 @@ Format:
       const url = LINKS['tjänster'];
       if (!reply.includes(url) && sitemapUrls.has(url)) {
         reply += `\n\n📖 Se en översikt av våra tjänster: [Tjänster](${url})`;
+        addedServiceLink = true;
       }
     }
 
     /* Informationsintention → relaterade inlägg eller blogg */
-    if (infoTriggers.test(lower)) {
+    const infoTriggered = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet)/i.test(lower);
+    if (infoTriggered) {
       const qTokens = tokenizeSv(lower);
       const scored = [];
       for (const p of postUrls) {
@@ -378,7 +442,8 @@ Format:
     }
 
     /* Lead-intention → gratis-analys */
-    if (leadTriggers.test(lower) || lower.includes('lokal seo')) {
+    const leadTriggered = leadTriggers.test(lower) || lower.includes('lokal seo');
+    if (leadTriggered) {
       const isLocal = lower.includes('lokal seo');
       const ctaUrl = isLocal ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/' : 'https://webbyrasigtuna.se/gratis-seo-analys/';
       const ctaLabel = isLocal ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
@@ -390,13 +455,21 @@ Format:
     // Sista safety: ta bort kvarvarande orphan-hakparenteser
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, '$1');
 
+    // Eventuell "Källa" när vi faktiskt har lagt in en intern länk
+    if (ADD_SOURCE_FOOTER) {
+      const hasInternalLink = /\]\(https:\/\/(?:www\.)?webbyrasigtuna\.se\/[^)]+\)/i.test(reply);
+      if (hasInternalLink && !/Källa:\s*Webbyrå Sigtuna/i.test(reply)) {
+        reply += `\n\n*Källa: Webbyrå Sigtuna*`;
+      }
+    }
+
     // Spara i KV
     await kv.rpush(key, JSON.stringify({ role: 'user', content: message }));
     await kv.rpush(key, JSON.stringify({ role: 'assistant', content: reply }));
     await kv.expire(key, 60 * 60 * 24); // 24 h
 
     const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
-    const lead_intent = lower.includes('lokal seo') || leadTriggers.test(lower);
+    const lead_intent = leadTriggered;
 
     return res.status(200).json({ reply, booking_intent, lead_intent });
   } catch (err) {
