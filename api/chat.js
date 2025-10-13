@@ -372,34 +372,43 @@ ${llmsContext}
       .replace(/\[(SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[SEO-tjänster]($2)')
       .replace(/\[(Lokal SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[Lokal SEO-tjänster]($2)');
 
-    /* === FIX 5b: SÄKER RÅ-URL-STÄDNING (ny) ===
-       - Låt markdown-länkar vara ifred
-       - Ta bort RÅA externa länkar
-       - Behåll RÅA interna länkar (även om inte exakt i sitemap) */
-    const mdUrlMatches = [...reply.matchAll(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/gi)];
-    const mdUrls = new Set(mdUrlMatches.map(m => m[1]));
-    reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u, off, str) => {
-      // Om URL:en redan är inne i en markdown-länk: rör inte
-      if (mdUrls.has(u)) return u;
+    /* === FIX 5b: SÄKER RÅ-URL-STÄDNING (behåll markdown + interna råa, ta bort externa råa) === */
+    {
+      const mdUrlMatches = [...reply.matchAll(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/gi)];
+      const mdUrls = new Set(mdUrlMatches.map(m => m[1]));
+      reply = reply.replace(/https?:\/\/[^\s)\]]+/gi, (u, off, str) => {
+        if (mdUrls.has(u)) return u;
+        const prev = str.slice(Math.max(0, off - 2), off);
+        if (prev === '](') return u;
+        try {
+          const host = new URL(u).hostname.replace(/^www\./,'');
+          if (!host.endsWith('webbyrasigtuna.se')) return '';
+        } catch { return ''; }
+        return u; // intern rå URL behålls
+      });
+    }
 
-      // Heuristik: om direkt före är "](" betraktar vi den som del av en länk
-      const prev = str.slice(Math.max(0, off - 2), off);
-      if (prev === '](') return u;
+    /* === FIX 5c: kollapsa parentetiska "[Label] (url)"-mönster till riktig markdown === */
+    // (a) "([Label]) (url)" -> "[Label](url)"
+    reply = reply.replace(
+      /\(\s*\[([^\]]+)\]\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/gi,
+      '[$1]($2)'
+    );
+    // (b) "Some Label ([anything]) (url)" -> "[Some Label](url)"
+    reply = reply.replace(
+      /([^\[\]\n()]+?)\s*\(\s*[^()]+\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/gi,
+      (_m, label, url) => `[${label.trim()}](${url})`
+    );
+    // (c) städa kvarvarande "([Label])" utan url
+    reply = reply.replace(/\(\s*\[[^\]]+\]\s*\)/gi, '');
 
-      // Ta bort externa råa länkar
-      try {
-        const host = new URL(u).hostname.replace(/^www\./,'');
-        if (!host.endsWith('webbyrasigtuna.se')) return '';
-      } catch { return ''; }
-
-      // Intern rå URL: behåll
-      return u;
-    });
-
-    // Städa tomma parenteser som blev över
+    /* === FIX 5d: små-säkerheter === */
+    // tomma parenteser
     reply = reply.replace(/\(\s*\)/g, '');
-    // Ensam slutparentes efter kända ord
+    // ensam slutparentes efter kända ord
     reply = reply.replace(/\b(Lokal SEO|SEO|Tjänster|WordPress|Webbdesign)\s*\)/gi, '$1');
+    // skydda mot hopfogning "Tjänsterhttps://..." → "Tjänster https://..."
+    reply = reply.replace(/(Tjänster)(?=https?:\/\/)/gi, '$1 ');
 
     /* Kuraterad tjänstelänk om inget redan satts */
     const order = ['lokal seo', 'seo', 'wordpress', 'wordpress-underhåll', 'underhåll', 'webbdesign', 'annonsering'];
@@ -419,7 +428,6 @@ ${llmsContext}
       const url = LINKS['tjänster'];
       if (!reply.includes(url) && sitemapUrls.has(url)) {
         reply += `\n\n📖 Se en översikt av våra tjänster: [Tjänster](${url})`;
-        addedServiceLink = true;
       }
     }
 
@@ -464,9 +472,9 @@ ${llmsContext}
     const leadTriggered = leadTriggers.test(lower) || lower.includes('lokal seo') || genericSeoImprove;
     if (leadTriggered) {
       const isLocal = lower.includes('lokal seo');
-      const ctaUrl = isLocal ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/' : 'https://webbyrasigtuna.se/gratis-seo-analys/';
+      const ctaUrl   = isLocal ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/' : 'https://webbyrasigtuna.se/gratis-seo-analys/';
       const ctaLabel = isLocal ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
-      if (!reply.includes(ctaUrl) && (await loadSitemapUrls()).has(ctaUrl)) {
+      if (!reply.includes(ctaUrl) && sitemapUrls.has(ctaUrl)) {
         reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
       }
     }
