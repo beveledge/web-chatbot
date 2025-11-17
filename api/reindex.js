@@ -41,11 +41,11 @@ function chunk(text, maxLen = 1500) {
 
 export default async function handler(req, res) {
   // ✅ Optional security token (protects your reindex endpoint)
-  const token = req.headers.authorization?.split(' ')[1];
-  if (process.env.REINDEX_TOKEN && token !== process.env.REINDEX_TOKEN) {
-    console.warn('🚫 Unauthorized reindex attempt');
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  //const token = req.headers.authorization?.split(' ')[1];
+  //if (process.env.REINDEX_TOKEN && token !== process.env.REINDEX_TOKEN) {
+  //  console.warn('🚫 Unauthorized reindex attempt');
+  //  return res.status(401).json({ error: 'Unauthorized' });
+  //}
   // validera ev. hemlig token: req.headers.authorization === `Bearer ${process.env.REINDEX_TOKEN}`
   try {
     const all = await getUrlsFromSitemaps();
