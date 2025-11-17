@@ -1,56 +1,65 @@
 // /api/kv-debug.js
 import { kv } from '@vercel/kv';
 
+function describeKey(name, value) {
+  const exists = value !== null && value !== undefined;
+  const type = Array.isArray(value) ? 'array' : typeof value;
+
+  let stringLength = null;
+  let arrayLength = null;
+  let preview = null;
+
+  if (typeof value === 'string') {
+    stringLength = value.length;
+    preview = value.slice(0, 160); // första 160 tecken
+  } else if (Array.isArray(value)) {
+    arrayLength = value.length;
+    preview = value.slice(0, 5);   // första 5 element
+  }
+
+  return { name, exists, type, stringLength, arrayLength, preview };
+}
+
 export default async function handler(req, res) {
   try {
-    // Enkel token-säkerhet
-    const expected = process.env.KV_DEBUG_TOKEN;
-    const token = req.query.token || req.headers['x-debug-token'];
-
-    if (!expected) {
-      return res.status(500).json({
-        ok: false,
-        error: 'KV_DEBUG_TOKEN saknas i environment variables',
-      });
-    }
-
-    if (token !== expected) {
-      return res.status(401).json({
-        ok: false,
-        error: 'Ogiltig token',
-      });
-    }
-
-    // KV-ping: skriv + läs ett nyckelvärde
-    const key = 'kv:debug:ping';
     const now = new Date().toISOString();
 
-    await kv.set(key, now, { ex: 60 }); // 60 sekunder
-    const value = await kv.get(key);
+    // Enkel ping-nyckel för att verifiera skrivning/läsning
+    await kv.set('kv:debug:ping', now);
+    const storedValue = await kv.get('kv:debug:ping');
 
-    // Försök läsa lite historik för att se att chatten verkligen skriver till KV
-    let sampleHistory = [];
-    try {
-      // OBS: vissa versioner av @vercel/kv saknar .keys,
-      // så vi håller det enkelt – bara prova ett par kända keys.
-      const maybe = await kv.lrange('chat:test', -5, -1);
-      sampleHistory = maybe || [];
-    } catch (e) {
-      // Ignorera om .lrange på 'chat:test' inte finns – det är bara extra info
-    }
+    // Läs LLMS-cache
+    const llmsIndex   = await kv.get('llms:index');
+    const llmsFull    = await kv.get('llms:full');
+    const llmsFullSv  = await kv.get('llms:full_sv');
+
+    // Läs sitemap-cache
+    const sitemapUrls = await kv.get('sitemap:urls');   // Set/Array i din kod
+    const sitemapPosts = await kv.get('sitemap:posts'); // Array med post-URL:er
 
     return res.status(200).json({
       ok: true,
       message: 'KV-anslutning OK',
-      pingKey: key,
-      storedValue: value,
-      sampleHistoryLength: sampleHistory.length,
+      ping: {
+        key: 'kv:debug:ping',
+        storedValue,
+      },
+      llms: {
+        index:   describeKey('llms:index', llmsIndex),
+        full:    describeKey('llms:full', llmsFull),
+        full_sv: describeKey('llms:full_sv', llmsFullSv),
+      },
+      sitemap: {
+        urls:  describeKey('sitemap:urls', sitemapUrls),
+        posts: describeKey('sitemap:posts', sitemapPosts),
+      },
     });
   } catch (err) {
-    console.error('KV-debug error:', err);
+    console.error('KV debug error:', err);
     return res.status(500).json({
       ok: false,
-      error: err?.message || 'Okänt fel i KV-debug',
+      error: 'KV-debug failed',
+      details: String(err?.message || err),
     });
   }
 }
