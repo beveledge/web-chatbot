@@ -51,7 +51,7 @@
       const PRIVACY_URL    = privacyUrl;
       const BRAND_NAME     = brandName + ' Chat';
 
-      // === NYTT: avatar, chat-ikon och förslag från config ===
+      // === avatar, chat-ikon och förslag från config ===
       const AVATAR_URL = config?.avatar_url
         || 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
 
@@ -66,7 +66,7 @@
             'Erbjuder ni WordPress-underhåll?'
           ];
 
-      // === NYTT: färger från config.colors (med säkra fallback-värden) ===
+      // === färger från config.colors (med säkra fallback-värden) ===
       const colors = config?.colors || {};
       const BRAND_BG   = colors.brand_bg   || '#000000';
       const BRAND_FG   = colors.brand_fg   || '#ff9e00';
@@ -416,7 +416,7 @@
 
           mdUrls.forEach((url) => {
             const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(\`\\)\\s*\${esc}\`, 'g'); // ) + ev. mellanslag/rad + samma URL
+            const re = new RegExp(`\\)\\s*${esc}`, 'g'); // ) + ev. mellanslag/rad + samma URL
             s = s.replace(re, ')');
           });
         })();
@@ -424,7 +424,7 @@
         // 0c) "Label URL" → gör etiketten till länk, göm rå URL
         s = s.replace(
           /(\b(?:SEO|Lokal SEO|Sökmotoroptimering|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys|Digital(?:a)?\s+marknadsföring)\b)\s+(https?:\/\/[^\s)]+)/gi,
-          (_m, label, url) => \`[\${label}](\${url})\`
+          (_m, label, url) => `[${label}](${url})`
         );
 
         // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
