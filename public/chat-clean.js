@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.1.2 (config från WP + generisk markdown) */
+/* Webbyrå Sigtuna Chat – Frontend v1.1.3 (config från WP + generisk markdown + färger) */
 (function () {
   'use strict';
 
@@ -66,6 +66,15 @@
             'Erbjuder ni WordPress-underhåll?'
           ];
 
+      // === NYTT: färger från config.colors (med säkra fallback-värden) ===
+      const colors = config?.colors || {};
+      const BRAND_BG   = colors.brand_bg   || '#000000';
+      const BRAND_FG   = colors.brand_fg   || '#ff9e00';
+      const TEXT_COL   = colors.text       || '#000000';
+      const BORDER_COL = colors.border     || '#e5e7eb';
+      const USER_BG    = colors.user_bg    || '#e8efff';
+      const WHITE_COL  = '#ffffff';
+
       const CTA_TEXT               = bookingLabel;
       const REPLACE_CHIPS_WITH_CTA = true;
       const LAUNCHER_DELAY_MS      = 1000;
@@ -111,12 +120,12 @@
 }
 
 :host {
-  --brandBg:#000;
-  --brandFg:#ff9e00;
-  --white:#fff;
-  --border:#e5e7eb;
-  --text:#000;
-  --userBg:#e8efff;
+  --brandBg:${BRAND_BG};
+  --brandFg:${BRAND_FG};
+  --white:${WHITE_COL};
+  --border:${BORDER_COL};
+  --text:${TEXT_COL};
+  --userBg:${USER_BG};
   --radius-m:12px;
   --shadow-s:0 2px 4px rgba(0,0,0,0.1);
   --shadow-l:0 4px 10px rgba(0,0,0,0.15);
@@ -407,7 +416,7 @@
 
           mdUrls.forEach((url) => {
             const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(`\\)\\s*${esc}`, 'g'); // ) + ev. mellanslag/rad + samma URL
+            const re = new RegExp(\`\\)\\s*\${esc}\`, 'g'); // ) + ev. mellanslag/rad + samma URL
             s = s.replace(re, ')');
           });
         })();
@@ -415,7 +424,7 @@
         // 0c) "Label URL" → gör etiketten till länk, göm rå URL
         s = s.replace(
           /(\b(?:SEO|Lokal SEO|Sökmotoroptimering|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys|Digital(?:a)?\s+marknadsföring)\b)\s+(https?:\/\/[^\s)]+)/gi,
-          (_m, label, url) => `[${label}](${url})`
+          (_m, label, url) => \`[\${label}](\${url})\`
         );
 
         // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
