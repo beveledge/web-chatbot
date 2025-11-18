@@ -354,6 +354,25 @@
           .replace(/\u00A0/g, ' ')
           .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
 
+          // 0a) Lösa "SEOhttps://..." osv (text fastklistrad mot URL)
+            s = s.replace(/([A-Za-zÅÄÖåäö])https?:\/\//g, '$1 https://');
+
+            // 0b) Fånga alla Markdown-länkar och ta bort råa URL:er direkt efter
+            //     t.ex. "[WordPress](url)url" eller "[SEO](url)\nurl"
+            (function () {
+            const mdUrls = new Set();
+            s.replace(/\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/gi, function (_m, url) {
+            mdUrls.add(url);
+            return _m;
+            });
+
+            mdUrls.forEach((url) => {
+            const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const re = new RegExp(`\\)\\s*${esc}`, 'g'); // ) + ev. mellanslag/rad + samma URL
+             s = s.replace(re, ')');
+             });
+            })();
+
         // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
         s = s.replace(
           /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*(?:\r?\n)?\s*\2/g,
