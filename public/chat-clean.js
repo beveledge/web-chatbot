@@ -4,31 +4,65 @@
 
   const safe = (fn) => { try { return fn(); } catch (e) { console.error('[WBS chat] init error:', e); } };
   const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 600));
-  idle(() => setTimeout(init, 350));
 
-  function init() {
+  // Hämta konfiguration från WordPress-pluginet
+  const CONFIG_ENDPOINT = '/wp-json/wbs-ai/v1/config';
+
+  async function loadConfig() {
+    try {
+      const res = await fetch(CONFIG_ENDPOINT, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('Config HTTP ' + res.status);
+      return await res.json();
+    } catch (e) {
+      console.warn('[WBS chat] kunde inte ladda config, använder fallback', e);
+      return null;
+    }
+  }
+
+  // Vänta tills sidan är lugn, ladda config, SEN starta init()
+  idle(async () => {
+    const cfg = await loadConfig();
+    setTimeout(() => init(cfg), 350);
+  });
+
+  function init(config) {
     safe(() => {
       if (typeof document === 'undefined') return;
       if (document.getElementById('wbs-launcher')) return;
 
-      /* --- Config --- */
-      const ENDPOINT       = "https://web-chatbot-beta.vercel.app/api/chat";
-      const BOOKING_URL    = "https://webbyrasigtuna.se/kundportal/boka";
-      const LEAD_LOCAL_URL = "https://webbyrasigtuna.se/gratis-lokal-seo-analys/";
-      const LEAD_SEO_URL   = "https://webbyrasigtuna.se/gratis-seo-analys/";
-      const PRIVACY_URL    = "https://webbyrasigtuna.se/integritetspolicy/";
-      const BRAND_NAME     = "Webbyrå Sigtuna Chat";
-      const AVATAR_URL     = "https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png";
-      const CHAT_ICON      = "https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png";
+      /* --- Config (nu baserad på WP-config) --- */
+      const baseUrl   = config?.base_url    || 'https://webbyrasigtuna.se';
+      const brandName = config?.brand_name  || 'Webbyrå Sigtuna';
+
+      const bookingUrl   = config?.primary_cta?.url   || (baseUrl + '/kontakt/');
+      const bookingLabel = config?.primary_cta?.label || 'Boka ett upptäcktsmöte';
+
+      const leadSeoUrl   = config?.lead_forms?.seo        || (baseUrl + '/gratis-seo-analys/');
+      const leadLocalUrl = config?.lead_forms?.local_seo  || (baseUrl + '/gratis-lokal-seo-analys/');
+
+      const pages        = config?.pages || {};
+      const privacyUrl   = pages.integritet || (baseUrl + '/integritetspolicy/');
+
+      // === Slutliga konstanter som resten av widgeten använder ===
+      const ENDPOINT       = 'https://web-chatbot-beta.vercel.app/api/chat';
+      const BOOKING_URL    = bookingUrl;
+      const LEAD_LOCAL_URL = leadLocalUrl;
+      const LEAD_SEO_URL   = leadSeoUrl;
+      const PRIVACY_URL    = privacyUrl;
+      const BRAND_NAME     = brandName + ' Chat';
+
+      const AVATAR_URL     = 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
+      const CHAT_ICON      = 'https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png';
+
       const SUGGESTIONS    = [
-        "Vilka tjänster erbjuder ni?",
-        "Erbjuder ni SEO-tjänster?",
-        "Erbjuder ni WordPress-underhåll?"
+        'Vilka tjänster erbjuder ni?',
+        'Erbjuder ni SEO-tjänster?',
+        'Erbjuder ni WordPress-underhåll?'
       ];
-      const CTA_TEXT                = "Boka ett upptäcktsmöte";
-      const REPLACE_CHIPS_WITH_CTA  = true;
-      const LAUNCHER_DELAY_MS       = 1000;
-      const CHIP_STAGGER_MS         = 70;
+      const CTA_TEXT               = bookingLabel;
+      const REPLACE_CHIPS_WITH_CTA = true;
+      const LAUNCHER_DELAY_MS      = 1000;
+      const CHIP_STAGGER_MS        = 70;
 
       /* --- Shadow host --- */
       const host = document.createElement('div');
