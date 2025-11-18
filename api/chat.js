@@ -401,12 +401,19 @@ reply = reply.replace(
   /\[WordPress\]\((https?:\/\/[^\s)]+webbplatsunderhall[^\s)]*)\)/gi,
   '[WordPress-underhåll]($1)'
 );
+// "våra [SEO](...sokmotoroptimering...)" → "våra [SEO-tjänster](...)"
+reply = reply.replace(
+  /\bvåra\s+\[SEO\]\((https?:\/\/[^)]*sokmotoroptimering[^)]*)\)/gi,
+  'våra [SEO-tjänster]($1)'
+);
+
 // Ta bort råa URL-dubletter direkt efter en markdown-länk
 // Ex: [SEO](https://url/)https://url/ → [SEO](https://url/)
 reply = reply.replace(
   /\]\((https?:\/\/[^\s)]+)\)\s*https?:\/\/[^\s)]+/gi,
   ']($1)'
 );
+
     /* === FIX 5b: SÄKER RÅ-URL-STÄDNING (behåll markdown + interna råa, ta bort externa råa) === */
     {
       const mdUrlMatches = [...reply.matchAll(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/gi)];
