@@ -396,7 +396,11 @@ ${llmsContext}
     reply = reply
       .replace(/\[(SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[SEO-tjänster]($2)')
       .replace(/\[(Lokal SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[Lokal SEO-tjänster]($2)');
-
+    // “[WordPress](...webbplatsunderhall...)” → “[WordPress-underhåll](...)”
+    reply = reply.replace(
+    /\[(WordPress)\]\((https?:\/\/[^)]*webbplatsunderhall[^)]*)\)/gi,
+   '[WordPress-underhåll]($2)'
+    );
     /* === FIX 5b: SÄKER RÅ-URL-STÄDNING (behåll markdown + interna råa, ta bort externa råa) === */
     {
       const mdUrlMatches = [...reply.matchAll(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/gi)];

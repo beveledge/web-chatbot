@@ -419,10 +419,16 @@
 
         for (const raw of lines) {
           const line = raw.trim();
-          if (!line) {
-            flushPara();
-            flushLists();
-            continue;
+            if (!line) {
+        // Tom rad:
+        // - Om vi är inne i en lista → behåll listan öppen (LLM gillar tom rad mellan 1., 2., 3.)
+        // - Annars → avsluta pågående paragraf
+        if (inUL || inOL) {
+          continue;    // låt listan fortsätta
+        }
+        flushPara();
+        // OBS: stäng inte listor här – de stängs senare vid riktigt blockbrytande rader
+        continue;
           }
 
           const mUL = /^[-*•]\s+(.+)$/.exec(line);
