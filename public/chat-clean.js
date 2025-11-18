@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.1.4 (config från WP + generisk markdown + färger) */
+/* Webbyrå Sigtuna Chat – Frontend v1.3.0 (config från WP + generisk markdown + lead_magnets) */
 (function () {
   'use strict';
 
@@ -37,21 +37,24 @@
       const bookingUrl   = config?.primary_cta?.url   || (baseUrl + '/kontakt/');
       const bookingLabel = config?.primary_cta?.label || 'Boka ett upptäcktsmöte';
 
-      const leadSeoUrl   = config?.lead_forms?.seo       || (baseUrl + '/gratis-seo-analys/');
-      const leadLocalUrl = config?.lead_forms?.local_seo || (baseUrl + '/gratis-lokal-seo-analys/');
+      // Generiska lead magnets (max 2, men vi bryr oss bara om de som finns)
+      const leadMagnets = Array.isArray(config?.lead_magnets) ? config.lead_magnets : [];
 
       const pages      = config?.pages || {};
       const privacyUrl = pages.integritet || (baseUrl + '/integritetspolicy/');
 
+      // Färger från config (med vettiga defaults)
+      const colors = config?.colors || {};
+      const brandBgColor = (typeof colors.brand_bg === 'string' && colors.brand_bg.trim()) ? colors.brand_bg.trim() : '#000000';
+      const brandFgColor = (typeof colors.brand_fg === 'string' && colors.brand_fg.trim()) ? colors.brand_fg.trim() : '#ff9e00';
+
       // === Slutliga konstanter som resten av widgeten använder ===
       const ENDPOINT       = 'https://web-chatbot-beta.vercel.app/api/chat';
       const BOOKING_URL    = bookingUrl;
-      const LEAD_LOCAL_URL = leadLocalUrl;
-      const LEAD_SEO_URL   = leadSeoUrl;
       const PRIVACY_URL    = privacyUrl;
       const BRAND_NAME     = brandName + ' Chat';
 
-      // === avatar, chat-ikon och förslag från config ===
+      // Avatar, chat-ikon och förslag från config
       const AVATAR_URL = config?.avatar_url
         || 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
 
@@ -65,38 +68,6 @@
             'Erbjuder ni SEO-tjänster?',
             'Erbjuder ni WordPress-underhåll?'
           ];
-
-      // === färger från config.colors (med säkra fallback-värden) ===
-      const colors = config?.colors || {};
-      const BRAND_BG   = colors.brand_bg   || '#000000';
-      const BRAND_FG   = colors.brand_fg   || '#ff9e00';
-      const TEXT_COL   = colors.text       || '#000000';
-      const BORDER_COL = colors.border     || '#e5e7eb';
-      const USER_BG    = colors.user_bg    || '#e8efff';
-      const WHITE_COL  = '#ffffff';
-
-      // Hjälpare: HEX → RGB (för hover-effekter)
-      function hexToRgb(hex) {
-        if (!hex || typeof hex !== 'string') {
-          return { r: 255, g: 158, b: 0 };
-        }
-        let h = hex.replace('#', '').trim();
-        const m = /^([0-9a-f]{3}|[0-9a-f]{6})$/i.test(h);
-        if (!m) return { r: 255, g: 158, b: 0 };
-        if (h.length === 3) {
-          h = h.split('').map((ch) => ch + ch).join('');
-        }
-        const num = parseInt(h, 16);
-        return {
-          r: (num >> 16) & 255,
-          g: (num >> 8) & 255,
-          b: num & 255,
-        };
-      }
-
-      const brandRgb = hexToRgb(BRAND_FG);
-      const CHIP_HOVER_BG       = `rgba(${brandRgb.r},${brandRgb.g},${brandRgb.b},.15)`;
-      const LAUNCHER_HOVER_GLOW = `0 0 12px rgba(${brandRgb.r},${brandRgb.g},${brandRgb.b},.5)`;
 
       const CTA_TEXT               = bookingLabel;
       const REPLACE_CHIPS_WITH_CTA = true;
@@ -143,12 +114,12 @@
 }
 
 :host {
-  --brandBg:${BRAND_BG};
-  --brandFg:${BRAND_FG};
-  --white:${WHITE_COL};
-  --border:${BORDER_COL};
-  --text:${TEXT_COL};
-  --userBg:${USER_BG};
+  --brandBg:${brandBgColor};
+  --brandFg:${brandFgColor};
+  --white:#fff;
+  --border:#e5e7eb;
+  --text:#000;
+  --userBg:#e8efff;
   --radius-m:12px;
   --shadow-s:0 2px 4px rgba(0,0,0,0.1);
   --shadow-l:0 4px 10px rgba(0,0,0,0.15);
@@ -178,7 +149,7 @@
   opacity:0
 }
 #wbs-launcher.wbs-visible{animation:wbs-fadeSlideIn .6s ease forwards}
-#wbs-launcher:hover{box-shadow:${LAUNCHER_HOVER_GLOW}}
+#wbs-launcher:hover{box-shadow:0 0 12px rgba(0,0,0,.35)}
 #wbs-launcher img{width:32px;height:32px;display:block}
 #wbs-launcher span{font-size:14px}
 #wbs-launcher.wbs-close{background:var(--brandBg);color:var(--white);border-color:var(--brandBg)}
@@ -273,7 +244,7 @@
   font-size:13px;
   cursor:pointer
 }
-.wbs-chip:hover{background:${CHIP_HOVER_BG}}
+.wbs-chip:hover{background:rgba(0,0,0,.03)}
 
 .wbs-inputrow{
   display:flex;
@@ -439,7 +410,7 @@
 
           mdUrls.forEach((url) => {
             const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(`\\)\\s*${esc}`, 'g'); // ) + ev. mellanslag/rad + samma URL
+            const re = new RegExp(`\\)\\s*${esc}`, 'g');
             s = s.replace(re, ')');
           });
         })();
@@ -487,7 +458,7 @@
 
           if (!line) {
             if (inUL || inOL) {
-              continue; // låt listan fortsätta
+              continue;
             }
             flushPara();
             continue;
@@ -496,7 +467,6 @@
           const mUL = /^[-*•]\s+(.+)$/.exec(line);
           const mOL = /^\d+\.\s+(.+)$/.exec(line);
 
-          // "Tips", "Relaterad läsning", "Källa" bryter alltid listor
           if ((inUL || inOL) && BREAKS_LIST.test(line)) {
             flushLists();
             flushPara();
@@ -526,7 +496,6 @@
             continue;
           }
 
-          // Vanlig text → paragraf
           para.push(line);
         }
 
@@ -650,14 +619,27 @@
           t.remove();
           addMsg('Bot', data.reply || '(Inget svar)');
 
-          if (data.lead_intent) {
-            const lower = m.toLowerCase();
-            const isLocal = lower.includes('lokal seo');
-            const url = isLocal ? LEAD_LOCAL_URL : LEAD_SEO_URL;
-            const label = isLocal ? 'Gör en gratis lokal SEO-analys' : 'Gör en gratis SEO-analys';
-            addCTAChip(label, url);
+          // Lead-intent: visa första (eller specifik) lead magnet om någon är definierad
+          if (data.lead_intent && leadMagnets.length) {
+            let chosen = null;
+
+            if (data.lead_key) {
+              chosen = leadMagnets.find(lm => lm.key === data.lead_key) || null;
+            }
+            if (!chosen) {
+              chosen = leadMagnets[0];
+            }
+
+            if (chosen && chosen.url) {
+              const label = chosen.label || chosen.url;
+              addCTAChip(label, chosen.url);
+            }
           }
-          if (data.booking_intent) addCTAChip('Boka möte direkt', BOOKING_URL);
+
+          // Boknings-intent: använd primär CTA-label + URL
+          if (data.booking_intent) {
+            addCTAChip(bookingLabel, BOOKING_URL);
+          }
 
         } catch (e) {
           console.error('[WBS chat] fetch error:', e);
