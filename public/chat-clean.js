@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.1.1 (config från WP + generisk markdown) */
+/* Webbyrå Sigtuna Chat – Frontend v1.1.2 (config från WP + generisk markdown) */
 (function () {
   'use strict';
 
@@ -51,15 +51,20 @@
       const PRIVACY_URL    = privacyUrl;
       const BRAND_NAME     = brandName + ' Chat';
 
-      // TODO: göra dessa konfigurerbara via pluginet i nästa steg
-      const AVATAR_URL = 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
-      const CHAT_ICON  = 'https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png';
+      // === NYTT: avatar, chat-ikon och förslag från config ===
+      const AVATAR_URL = config?.avatar_url
+        || 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
 
-      const SUGGESTIONS = [
-        'Vilka tjänster erbjuder ni?',
-        'Erbjuder ni SEO-tjänster?',
-        'Erbjuder ni WordPress-underhåll?'
-      ];
+      const CHAT_ICON = config?.chat_icon_url
+        || 'https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png';
+
+      const SUGGESTIONS = (Array.isArray(config?.suggestions) && config.suggestions.length > 0)
+        ? config.suggestions
+        : [
+            'Vilka tjänster erbjuder ni?',
+            'Erbjuder ni SEO-tjänster?',
+            'Erbjuder ni WordPress-underhåll?'
+          ];
 
       const CTA_TEXT               = bookingLabel;
       const REPLACE_CHIPS_WITH_CTA = true;
@@ -419,8 +424,6 @@
           '[$1]($2)'
         );
 
-        // (Tidigare "steg 2" med webbyrasigtuna.se är borttaget – överflödigt och för domänspecifikt)
-
         // 3) Markdown-länkar [text](url) → HTML-länkar
         s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
 
@@ -451,9 +454,6 @@
           const line = raw.trim();
 
           if (!line) {
-            // Tom rad:
-            // - Om vi är inne i en lista → behåll listan öppen (LLM gillar tom rad mellan 1., 2., 3.)
-            // - Annars → avsluta pågående paragraf
             if (inUL || inOL) {
               continue; // låt listan fortsätta
             }
