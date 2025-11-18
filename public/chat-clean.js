@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.3.0 (config från WP + generisk markdown + lead_magnets) */
+/* Webbyrå Sigtuna Chat – Frontend v1.3.1 (config från WP + generisk markdown + lead_magnets + powered-by) */
 (function () {
   'use strict';
 
@@ -273,6 +273,24 @@
   cursor:pointer
 }
 
+/* Powered by-rad mellan input och footer */
+.wbs-powered{
+  border-top:1px solid var(--border);
+  background:#fff;
+  padding:4px 12px 4px 12px;
+  font-size:11px;
+  text-align:right;
+  color:#777;
+}
+.wbs-powered a{
+  color:#999;
+  text-decoration:none;
+}
+.wbs-powered a:hover{
+  color:var(--brandFg);
+  text-decoration:underline;
+}
+
 .wbs-footer{
   display:flex;
   justify-content:center;
@@ -326,6 +344,14 @@
       inp.placeholder = 'Skriv ett meddelande…';
       const send = c('button', 'wbs-send');
       send.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
+      inpRow.append(inp, send);
+
+      // Powered by-rad (mellan input och footer)
+      const powered = c('div', 'wbs-powered');
+      const poweredLink = c('a', null, 'Powered by Webbyrå Sigtuna');
+      poweredLink.href = 'https://webbyrasigtuna.se/';
+      poweredLink.target = '_blank';
+      powered.appendChild(poweredLink);
 
       const foot = c('div', 'wbs-footer');
       const priv = c('a', null, 'Integritetspolicy');
@@ -333,9 +359,8 @@
       priv.target = '_blank';
       const clear = c('a', null, 'Rensa chatten');
 
-      inpRow.append(inp, send);
       foot.append(priv, clear);
-      panel.append(header, log, chips, inpRow, foot);
+      panel.append(header, log, chips, inpRow, powered, foot);
       root.appendChild(panel);
 
       /* --- CTA helper --- */

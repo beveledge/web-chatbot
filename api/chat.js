@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Backend v5.0.6 */
+/* Webbyrå Sigtuna Chat – Backend v5.1.0 (generiska lead-magneter) */
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 
@@ -28,16 +28,19 @@ function setCors(req, res) {
   }
 }
 
-/* ========== Config för LLMs-filer ========== */
-const LLMS_BASE         = 'https://webbyrasigtuna.se';
-const LLMS_INDEX_URL    = `${LLMS_BASE}/llms.txt`;
-const LLMS_FULL_URL     = `${LLMS_BASE}/llms-full.txt`;
-const LLMS_FULL_SV_URL  = `${LLMS_BASE}/llms-full-sv.txt`;
-const LLMS_TTL          = 60 * 60 * 12; // 12h cache
+/* ========== Bas-URL (site) & config-endpoint ========== */
+const LLMS_BASE        = 'https://webbyrasigtuna.se';
+const LLMS_INDEX_URL   = `${LLMS_BASE}/llms.txt`;
+const LLMS_FULL_URL    = `${LLMS_BASE}/llms-full.txt`;
+const LLMS_FULL_SV_URL = `${LLMS_BASE}/llms-full-sv.txt`;
 
-const LLMS_INDEX_KEY    = 'llms:index';
-const LLMS_FULL_KEY     = 'llms:full';
-const LLMS_FULL_SV_KEY  = 'llms:full_sv';
+const CONFIG_URL       = `${LLMS_BASE}/wp-json/wbs-ai/v1/config`;
+
+/* ========== LLMS-konfiguration ========== */
+const LLMS_TTL         = 60 * 60 * 12; // 12h cache
+const LLMS_INDEX_KEY   = 'llms:index';
+const LLMS_FULL_KEY    = 'llms:full';
+const LLMS_FULL_SV_KEY = 'llms:full_sv';
 
 // Hur mycket kontext vi vågar injicera i systemprompten
 const LLMS_MAX_CHARS_PER_BLOCK = 2000; // ca 400–600 tokens
@@ -53,11 +56,22 @@ const SITEMAP_CACHE_KEY = 'sitemap:urls';
 const POSTS_CACHE_KEY   = 'sitemap:posts';
 const SITEMAP_TTL       = 60 * 60 * 24; // 24h
 
+/* ========== Site-config-cache (WP /config) ========== */
+const CONFIG_KV_KEY = 'site:config';
+const CONFIG_TTL    = 60 * 5; // 5 minuter
+
 async function fetchText(url) {
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`${url} -> ${r.status}`);
   return await r.text();
 }
+
+async function fetchJson(url) {
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`${url} -> ${r.status}`);
+  return await r.json();
+}
+
 function extractXmlLocs(xml) {
   return [...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map(m => m[1]);
 }
@@ -139,10 +153,29 @@ async function loadLLMSBundle() {
     loadKVOrFetch(LLMS_FULL_KEY,    LLMS_FULL_URL,    LLMS_TTL),
     loadKVOrFetch(LLMS_FULL_SV_KEY, LLMS_FULL_SV_URL, LLMS_TTL),
   ]);
-  // begränsa längd
   const svPart   = (fullSvTxt || '').slice(0, LLMS_MAX_CHARS_PER_BLOCK);
   const fullPart = (fullTxt   || '').slice(0, LLMS_MAX_CHARS_PER_BLOCK);
   return { indexTxt, fullPart, svPart };
+}
+
+/* ========== Site-config (WP /config) ========== */
+async function loadSiteConfig() {
+  try {
+    const cached = await kv.get(CONFIG_KV_KEY);
+    if (typeof cached === 'string' && cached.length) {
+      try { return JSON.parse(cached); } catch {}
+    }
+  } catch {}
+
+  try {
+    const json = await fetchJson(CONFIG_URL);
+    try {
+      await kv.set(CONFIG_KV_KEY, JSON.stringify(json), { ex: CONFIG_TTL });
+    } catch {}
+    return json;
+  } catch {
+    return null;
+  }
 }
 
 /* ========== Svenska hjälp-funktioner ========== */
@@ -207,6 +240,41 @@ function mapLabel(labelRaw = '') {
   return null;
 }
 
+/* ========== Lead-magneter: generisk matcher ========== */
+function pickLeadMagnet(leadMagnets, messageLower) {
+  if (!Array.isArray(leadMagnets) || !leadMagnets.length) return null;
+
+  const tokens = tokenizeSv(messageLower);
+  let best = null;
+  let bestScore = -1;
+
+  for (const lm of leadMagnets) {
+    if (!lm || !lm.url) continue;
+    const label = (lm.label || '').toLowerCase();
+    const key   = (lm.key   || '').toLowerCase();
+    const text  = `${label} ${key}`.trim();
+    const ltokens = tokenizeSv(text);
+
+    let score = 0;
+    for (const t of tokens) {
+      if (ltokens.includes(t)) score += 1;
+    }
+
+    // Liten bonus om label/key innehåller typiska leadord
+    if (/\b(pris|offert|guide|analys|checklista|webbplats|strategi|rådgivning|demo)\b/i.test(label)) {
+      score += 0.3;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = lm;
+    }
+  }
+
+  // Om allt får 0 → ta första som fallback
+  return best || leadMagnets[0];
+}
+
 /* ========== Huvud-handler ========== */
 export default async function handler(req, res) {
   try {
@@ -225,11 +293,12 @@ export default async function handler(req, res) {
     const history = (raw || []).map(s => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
     const trimmed = history.slice(-20);
 
-    // Ladda sitemap & inlägg & LLMS
-    const [sitemapUrls, postUrls, llms] = await Promise.all([
+    // Ladda sitemap & inlägg & LLMS & site-config
+    const [sitemapUrls, postUrls, llms, siteConfig] = await Promise.all([
       loadSitemapUrls(),
       loadPostUrls(),
-      loadLLMSBundle()
+      loadLLMSBundle(),
+      loadSiteConfig(),
     ]);
 
     const llmsContext = `
@@ -243,7 +312,6 @@ ${llms.fullPart}
 ${llms.svPart}
 `.trim();
 
-    // Systemprompt
     const system = {
       role: 'system',
       content: `
@@ -396,23 +464,23 @@ ${llmsContext}
     reply = reply
       .replace(/\[(SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[SEO-tjänster]($2)')
       .replace(/\[(Lokal SEO)\]\((https?:\/\/[^)]+)\)\s*[–-]\s*tja?nster/gi, '[Lokal SEO-tjänster]($2)');
-    // “[WordPress](...webbplatsunderhall...)” → “[WordPress-underhåll](...)”
-reply = reply.replace(
-  /\[WordPress\]\((https?:\/\/[^\s)]+webbplatsunderhall[^\s)]*)\)/gi,
-  '[WordPress-underhåll]($1)'
-);
-// "våra [SEO](...sokmotoroptimering...)" → "våra [SEO-tjänster](...)"
-reply = reply.replace(
-  /\bvåra\s+\[SEO\]\((https?:\/\/[^)]*sokmotoroptimering[^)]*)\)/gi,
-  'våra [SEO-tjänster]($1)'
-);
 
-// Ta bort råa URL-dubletter direkt efter en markdown-länk
-// Ex: [SEO](https://url/)https://url/ → [SEO](https://url/)
-reply = reply.replace(
-  /\]\((https?:\/\/[^\s)]+)\)\s*https?:\/\/[^\s)]+/gi,
-  ']($1)'
-);
+    // “[WordPress](...webbplatsunderhall...)” → “[WordPress-underhåll](...)”
+    reply = reply.replace(
+      /\[WordPress\]\((https?:\/\/[^\s)]+webbplatsunderhall[^\s)]*)\)/gi,
+      '[WordPress-underhåll]($1)'
+    );
+    // "våra [SEO](...sokmotoroptimering...)" → "våra [SEO-tjänster](...)"
+    reply = reply.replace(
+      /\bvåra\s+\[SEO\]\((https?:\/\/[^)]*sokmotoroptimering[^)]*)\)/gi,
+      'våra [SEO-tjänster]($1)'
+    );
+
+    // Ta bort råa URL-dubletter direkt efter en markdown-länk
+    reply = reply.replace(
+      /\]\((https?:\/\/[^\s)]+)\)\s*https?:\/\/[^\s)]+/gi,
+      ']($1)'
+    );
 
     /* === FIX 5b: SÄKER RÅ-URL-STÄDNING (behåll markdown + interna råa, ta bort externa råa) === */
     {
@@ -505,15 +573,36 @@ reply = reply.replace(
       }
     }
 
-    /* Lead-intention → gratis-analys (inkl. generiska förbättra/optimera/öka SEO) */
+    /* ========== Lead-intent + generiska lead-magneter ========== */
     const genericSeoImprove = /\bseo\b.*\b(förbättra|optimera|öka)\b/i.test(lower);
     const leadTriggered = leadTriggers.test(lower) || lower.includes('lokal seo') || genericSeoImprove;
+
+    const leadMagnets = Array.isArray(siteConfig?.lead_magnets)
+      ? siteConfig.lead_magnets
+      : [];
+
+    let chosenLead = null;
+
     if (leadTriggered) {
-      const isLocal = lower.includes('lokal seo');
-      const ctaUrl   = isLocal ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/' : 'https://webbyrasigtuna.se/gratis-seo-analys/';
-      const ctaLabel = isLocal ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
-      if (!reply.includes(ctaUrl) && sitemapUrls.has(ctaUrl)) {
-        reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
+      if (leadMagnets.length) {
+        // Generisk, kundstyrd lead-magnet
+        chosenLead = pickLeadMagnet(leadMagnets, lower);
+        if (chosenLead && chosenLead.url) {
+          const label = chosenLead.label || 'Läs mer här';
+          if (!reply.includes(chosenLead.url)) {
+            reply += `\n\n🤝 Vill du ta nästa steg? Här är ett förslag: [${label}](${chosenLead.url})`;
+          }
+        }
+      } else {
+        // Fallback till befintlig SEO-analys-CTA (för bakåtkompabilitet)
+        const isLocal = lower.includes('lokal seo');
+        const ctaUrl   = isLocal
+          ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/'
+          : 'https://webbyrasigtuna.se/gratis-seo-analys/';
+        const ctaLabel = isLocal ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
+        if (!reply.includes(ctaUrl) && sitemapUrls.has(ctaUrl)) {
+          reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
+        }
       }
     }
 
@@ -534,9 +623,10 @@ reply = reply.replace(
     await kv.expire(key, 60 * 60 * 24); // 24 h
 
     const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
-    const lead_intent = leadTriggered;
+    const lead_intent = !!(leadTriggered);
+    const lead_key   = chosenLead?.key || null;
 
-    return res.status(200).json({ reply, booking_intent, lead_intent });
+    return res.status(200).json({ reply, booking_intent, lead_intent, lead_key });
   } catch (err) {
     console.error('Chat error:', err);
     return res.status(500).json({ error: 'Server error' });
