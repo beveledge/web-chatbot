@@ -1,4 +1,4 @@
-// /api/chat.js — v5.0.6
+/* Webbyrå Sigtuna Chat – Backend v5.0.6 */
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 

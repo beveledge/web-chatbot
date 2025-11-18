@@ -1,4 +1,4 @@
-/* === Webbyrå Sigtuna Chat – CLEAN v1 === */
+/* Webbyrå Sigtuna Chat – Frontend v1.1.1 (config från WP + generisk markdown) */
 (function () {
   'use strict';
 
@@ -31,17 +31,17 @@
       if (document.getElementById('wbs-launcher')) return;
 
       /* --- Config (nu baserad på WP-config) --- */
-      const baseUrl   = config?.base_url    || 'https://webbyrasigtuna.se';
-      const brandName = config?.brand_name  || 'Webbyrå Sigtuna';
+      const baseUrl   = config?.base_url   || 'https://webbyrasigtuna.se';
+      const brandName = config?.brand_name || 'Webbyrå Sigtuna';
 
       const bookingUrl   = config?.primary_cta?.url   || (baseUrl + '/kontakt/');
       const bookingLabel = config?.primary_cta?.label || 'Boka ett upptäcktsmöte';
 
-      const leadSeoUrl   = config?.lead_forms?.seo        || (baseUrl + '/gratis-seo-analys/');
-      const leadLocalUrl = config?.lead_forms?.local_seo  || (baseUrl + '/gratis-lokal-seo-analys/');
+      const leadSeoUrl   = config?.lead_forms?.seo       || (baseUrl + '/gratis-seo-analys/');
+      const leadLocalUrl = config?.lead_forms?.local_seo || (baseUrl + '/gratis-lokal-seo-analys/');
 
-      const pages        = config?.pages || {};
-      const privacyUrl   = pages.integritet || (baseUrl + '/integritetspolicy/');
+      const pages      = config?.pages || {};
+      const privacyUrl = pages.integritet || (baseUrl + '/integritetspolicy/');
 
       // === Slutliga konstanter som resten av widgeten använder ===
       const ENDPOINT       = 'https://web-chatbot-beta.vercel.app/api/chat';
@@ -51,14 +51,16 @@
       const PRIVACY_URL    = privacyUrl;
       const BRAND_NAME     = brandName + ' Chat';
 
-      const AVATAR_URL     = 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
-      const CHAT_ICON      = 'https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png';
+      // TODO: göra dessa konfigurerbara via pluginet i nästa steg
+      const AVATAR_URL = 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
+      const CHAT_ICON  = 'https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png';
 
-      const SUGGESTIONS    = [
+      const SUGGESTIONS = [
         'Vilka tjänster erbjuder ni?',
         'Erbjuder ni SEO-tjänster?',
         'Erbjuder ni WordPress-underhåll?'
       ];
+
       const CTA_TEXT               = bookingLabel;
       const REPLACE_CHIPS_WITH_CTA = true;
       const LAUNCHER_DELAY_MS      = 1000;
@@ -94,12 +96,12 @@
 
 @font-face {
   font-family: "Encode Sans SC";
-  src: local("Encode Sans SC"), url("https://webbyrasigtuna.se/wp-content/fonts/encode-sans-sc.woff2") format("woff2");
+  src: local("Encode Sans SC"), url("https://webbyrasigtuna.se/wp-content/uploads/fonts/encode-sans-sc/encode-sans-sc/latin/EncodeSansSC-VariableFont_wght.woff2") format("woff2");
   font-display: swap;
 }
 @font-face {
   font-family: "Encode Sans Semi Expanded";
-  src: local("Encode Sans Semi Expanded"), url("https://webbyrasigtuna.se/wp-content/fonts/encode-sans-semi-expanded.woff2") format("woff2");
+  src: local("Encode Sans Semi Expanded"), url("https://webbyrasigtuna.se/wp-content/uploads/fonts/encode-sans-semi-expanded/encode-sans-semi-expanded/latin/EncodeSansSemiExpanded-300.woff2") format("woff2");
   font-display: swap;
 }
 
@@ -282,7 +284,6 @@
 
 .wbs-fade-out{animation:wbsFadeOut .6s ease forwards}
 @keyframes wbsFadeOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(6px)}}
-.wbs-fade-in{animation:wbsFadeIn .6s ease forwards}
 @keyframes wbsFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
       `;
       const style = document.createElement('style');
@@ -376,8 +377,8 @@
         chips.append(chip);
       });
 
-      /* === Enkelt Markdown/HTML-rendering === */
-            function renderMarkdown(txt) {
+      /* === Enkelt Markdown/HTML-rendering (generisk, ej domänbunden) === */
+      function renderMarkdown(txt) {
         if (!txt) return '';
 
         let s = String(txt);
@@ -388,30 +389,29 @@
           .replace(/\u00A0/g, ' ')
           .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
 
-          // 0a) Lösa "SEOhttps://..." osv (text fastklistrad mot URL)
-            s = s.replace(/([A-Za-zÅÄÖåäö])https?:\/\//g, '$1 https://');
+        // 0a) Lösa "SEOhttps://..." osv (text fastklistrad mot URL)
+        s = s.replace(/([A-Za-zÅÄÖåäö])https?:\/\//g, '$1 https://');
 
-            // 0b) Fånga alla Markdown-länkar och ta bort råa URL:er direkt efter
-            //     t.ex. "[WordPress](url)url" eller "[SEO](url)\nurl"
-            (function () {
-            const mdUrls = new Set();
-            s.replace(/\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/gi, function (_m, url) {
+        // 0b) Fånga alla Markdown-länkar och ta bort råa URL:er direkt efter
+        (function () {
+          const mdUrls = new Set();
+          s.replace(/\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/gi, function (_m, url) {
             mdUrls.add(url);
             return _m;
-            });
+          });
 
-            mdUrls.forEach((url) => {
+          mdUrls.forEach((url) => {
             const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const re = new RegExp(`\\)\\s*${esc}`, 'g'); // ) + ev. mellanslag/rad + samma URL
-             s = s.replace(re, ')');
-             });
-            })();
-   
-            // 0c) "Label URL" → gör etiketten till länk, göm rå URL
-            s = s.replace(
-              /(\b(?:SEO|Lokal SEO|Sökmotoroptimering|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys|Digital(?:a)?\s+marknadsföring)\b)\s+(https?:\/\/[^\s)]+)/gi,
-            (_m, label, url) => `[${label}](${url})`
-            );
+            s = s.replace(re, ')');
+          });
+        })();
+
+        // 0c) "Label URL" → gör etiketten till länk, göm rå URL
+        s = s.replace(
+          /(\b(?:SEO|Lokal SEO|Sökmotoroptimering|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys|Digital(?:a)?\s+marknadsföring)\b)\s+(https?:\/\/[^\s)]+)/gi,
+          (_m, label, url) => `[${label}](${url})`
+        );
 
         // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
         s = s.replace(
@@ -419,11 +419,7 @@
           '[$1]($2)'
         );
 
-        // 2) "SEOhttps://...webbyrasigtuna.se..." → "[SEO](https://...)" (m.fl. tjänster)
-        s = s.replace(
-          /\b(SEO|Lokal SEO|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys)\s*(https?:\/\/[^\s)]+webbyrasigtuna\.se[^\s)]*)/gi,
-          '[$1]($2)'
-        );
+        // (Tidigare "steg 2" med webbyrasigtuna.se är borttaget – överflödigt och för domänspecifikt)
 
         // 3) Markdown-länkar [text](url) → HTML-länkar
         s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
@@ -453,16 +449,16 @@
 
         for (const raw of lines) {
           const line = raw.trim();
-            if (!line) {
-        // Tom rad:
-        // - Om vi är inne i en lista → behåll listan öppen (LLM gillar tom rad mellan 1., 2., 3.)
-        // - Annars → avsluta pågående paragraf
-        if (inUL || inOL) {
-          continue;    // låt listan fortsätta
-        }
-        flushPara();
-        // OBS: stäng inte listor här – de stängs senare vid riktigt blockbrytande rader
-        continue;
+
+          if (!line) {
+            // Tom rad:
+            // - Om vi är inne i en lista → behåll listan öppen (LLM gillar tom rad mellan 1., 2., 3.)
+            // - Annars → avsluta pågående paragraf
+            if (inUL || inOL) {
+              continue; // låt listan fortsätta
+            }
+            flushPara();
+            continue;
           }
 
           const mUL = /^[-*•]\s+(.+)$/.exec(line);
