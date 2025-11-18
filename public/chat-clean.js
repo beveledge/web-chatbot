@@ -372,6 +372,12 @@
              s = s.replace(re, ')');
              });
             })();
+   
+            // 0c) "Label URL" → gör etiketten till länk, göm rå URL
+            s = s.replace(
+              /(\b(?:SEO|Lokal SEO|Sökmotoroptimering|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys|Digital(?:a)?\s+marknadsföring)\b)\s+(https?:\/\/[^\s)]+)/gi,
+            (_m, label, url) => `[${label}](${url})`
+            );
 
         // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
         s = s.replace(
