@@ -1,91 +1,38 @@
-/* === Webbyrå Sigtuna Chat – v2 (renare layout) === */
+/* === Webbyrå Sigtuna Chat – CLEAN v1 === */
 (function () {
   'use strict';
 
-  const safe = (fn) => { try { return fn(); } catch (e) { console.error('[WBS chat v2] init error:', e); } };
+  const safe = (fn) => { try { return fn(); } catch (e) { console.error('[WBS chat] init error:', e); } };
   const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 600));
   idle(() => setTimeout(init, 350));
 
-  /* ========= Enkel, robust renderer ========= */
-  function renderMessageToHtml(txt) {
-    if (!txt) return '';
-
-    let s = String(txt)
-      .replace(/\u00A0/g, ' ')
-      .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-')  // konstiga streck → "-"
-      .trim();
-
-    // 1) Konvertera Markdown-länkar [Text](https://...)
-    s = s.replace(
-      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-      '<a href="$2">$1</a>'
-    );
-
-    // 2) Auto-länka råa URLs
-    s = s.replace(
-      /(^|[\s(])(https?:\/\/[^\s)]+)(?=$|[\s).,!?])/gi,
-      function (_m, p1, url) {
-        return p1 + '<a href="' + url + '">' + url + '</a>';
-      }
-    );
-
-    // 3) Headings: "### Tips:" → fet rad
-    s = s.replace(/^###\s*([^:\n]+):?\s*$/gim, function (_m, h) {
-      return '<p><strong>' + h.trim() + ':</strong></p>';
-    });
-
-    // 4) Dela upp i block på tomrad (paragrafer / listblock)
-    const blocks = s.split(/\n{2,}/);
-    const htmlBlocks = [];
-
-    for (const block of blocks) {
-      const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      if (!lines.length) continue;
-
-      // a) Lista? (alla rader börjar med -, * eller •)
-      const isList = lines.every(l => /^[-*•]\s+/.test(l));
-
-      if (isList) {
-        const items = lines.map(l => l.replace(/^[-*•]\s+/, '').trim());
-        const lis = items.map(it => '<li>' + it + '</li>').join('');
-        htmlBlocks.push('<ul>' + lis + '</ul>');
-      } else {
-        // b) Vanlig paragraf (radbrytningar → <br>)
-        const content = lines.join('<br>');
-        htmlBlocks.push('<p>' + content + '</p>');
-      }
-    }
-
-    return htmlBlocks.join('\n');
-  }
-
-  /* ========= Init ========= */
   function init() {
     safe(() => {
-      if (document.getElementById('wbs-launcher-v2')) return;
+      if (typeof document === 'undefined') return;
+      if (document.getElementById('wbs-launcher')) return;
 
       /* --- Config --- */
-      const ENDPOINT = 'https://web-chatbot-beta.vercel.app/api/chat';
-      const BOOKING_URL = 'https://webbyrasigtuna.se/kundportal/boka';
-      const LEAD_LOCAL_URL = 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/';
-      const LEAD_SEO_URL = 'https://webbyrasigtuna.se/gratis-seo-analys/';
-      const PRIVACY_URL = 'https://webbyrasigtuna.se/integritetspolicy/';
-      const BRAND_NAME = 'Webbyrå Sigtuna Chat';
-      const AVATAR_URL = 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
-      const CHAT_ICON = 'https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png';
-      const SUGGESTIONS = [
-        'Vilka tjänster erbjuder ni?',
-        'Erbjuder ni SEO-tjänster?',
-        'Erbjuder ni WordPress-underhåll?'
+      const ENDPOINT       = "https://web-chatbot-beta.vercel.app/api/chat";
+      const BOOKING_URL    = "https://webbyrasigtuna.se/kundportal/boka";
+      const LEAD_LOCAL_URL = "https://webbyrasigtuna.se/gratis-lokal-seo-analys/";
+      const LEAD_SEO_URL   = "https://webbyrasigtuna.se/gratis-seo-analys/";
+      const PRIVACY_URL    = "https://webbyrasigtuna.se/integritetspolicy/";
+      const BRAND_NAME     = "Webbyrå Sigtuna Chat";
+      const AVATAR_URL     = "https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png";
+      const CHAT_ICON      = "https://webbyrasigtuna.se/wp-content/uploads/2025/10/chat-bubble.png";
+      const SUGGESTIONS    = [
+        "Vilka tjänster erbjuder ni?",
+        "Erbjuder ni SEO-tjänster?",
+        "Erbjuder ni WordPress-underhåll?"
       ];
-      const CTA_TEXT = 'Boka ett upptäcktsmöte';
-      const REPLACE_CHIPS_WITH_CTA = true;
-      const LAUNCHER_DELAY_MS = 1000;
-      const CHIP_STAGGER_MS = 70;
+      const CTA_TEXT                = "Boka ett upptäcktsmöte";
+      const REPLACE_CHIPS_WITH_CTA  = true;
+      const LAUNCHER_DELAY_MS       = 1000;
+      const CHIP_STAGGER_MS         = 70;
 
       /* --- Shadow host --- */
       const host = document.createElement('div');
-      host.id = 'wbs-host-v2';
+      host.id = 'wbs-host';
       host.style.all = 'initial';
       host.style.position = 'fixed';
       host.style.inset = 'auto auto 0 0';
@@ -139,23 +86,68 @@
 * { box-sizing: border-box; font-family: "Encode Sans Semi Expanded","Encode Sans SC",system-ui,sans-serif; }
 
 .wbs-chip-anim{opacity:0;transform:translateY(6px);animation:wbs-fadeUp .35s ease forwards;}
-#wbs-launcher-v2{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom,0));left:24px;z-index:2147483647;
-  height:56px;border-radius:999px;border:2px solid var(--brandFg);background:var(--white);cursor:pointer;display:flex;align-items:center;gap:10px;
-  box-shadow:0 10px 24px rgba(0,0,0,.25);padding:0 16px;color:var(--text);opacity:0}
-#wbs-launcher-v2.wbs-visible{animation:wbs-fadeSlideIn .6s ease forwards}
-#wbs-launcher-v2:hover{box-shadow:0 0 12px rgba(255,158,0,.5)}
-#wbs-launcher-v2 img{width:32px;height:32px;display:block}
-#wbs-launcher-v2 span{font-size:14px}
-#wbs-launcher-v2.wbs-close{background:var(--brandBg);color:var(--white);border-color:var(--brandBg)}
+#wbs-launcher{
+  position:fixed;
+  bottom:calc(24px + env(safe-area-inset-bottom,0));
+  left:24px;
+  z-index:2147483647;
+  height:56px;
+  border-radius:999px;
+  border:2px solid var(--brandFg);
+  background:var(--white);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  box-shadow:0 10px 24px rgba(0,0,0,.25);
+  padding:0 16px;
+  color:var(--text);
+  opacity:0
+}
+#wbs-launcher.wbs-visible{animation:wbs-fadeSlideIn .6s ease forwards}
+#wbs-launcher:hover{box-shadow:0 0 12px rgba(255,158,0,.5)}
+#wbs-launcher img{width:32px;height:32px;display:block}
+#wbs-launcher span{font-size:14px}
+#wbs-launcher.wbs-close{background:var(--brandBg);color:var(--white);border-color:var(--brandBg)}
 
-.wbs-panel{position:fixed;bottom:calc(92px + env(safe-area-inset-bottom,0));left:24px;z-index:2147483647;width:420px;max-width:96vw;min-height:560px;
-  max-height:calc(85vh + 10px);border-radius:16px;overflow:hidden;display:none;flex-direction:column;background:#fff;box-shadow:0 20px 50px rgba(0,0,0,.25);
-  border:1px solid var(--border);opacity:0;will-change:transform,opacity}
+.wbs-panel{
+  position:fixed;
+  bottom:calc(92px + env(safe-area-inset-bottom,0));
+  left:24px;
+  z-index:2147483647;
+  width:420px;
+  max-width:96vw;
+  min-height:560px;
+  max-height:calc(85vh + 10px);
+  border-radius:16px;
+  overflow:hidden;
+  display:none;
+  flex-direction:column;
+  background:#fff;
+  box-shadow:0 20px 50px rgba(0,0,0,.25);
+  border:1px solid var(--border);
+  opacity:0;
+  will-change:transform,opacity
+}
 .wbs-panel.wbs-open{display:flex;animation:wbs-slideUp .4s ease forwards}
 .wbs-panel.wbs-closing{animation:wbs-slideDown .3s ease forwards}
-@media(max-width:640px){.wbs-panel{width:96vw;min-height:560px;max-height:calc(78vh + 10px)}}
+@media(max-width:640px){
+  .wbs-panel{
+    width:96vw;
+    min-height:560px;
+    max-height:calc(78vh + 10px)
+  }
+}
 
-.wbs-header{background:var(--brandBg);color:#fff;padding:10px 12px;display:flex;align-items:center;gap:10px;font-family:"Encode Sans SC",system-ui,sans-serif}
+.wbs-header{
+  background:var(--brandBg);
+  color:#fff;
+  padding:10px 12px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-family:"Encode Sans SC",system-ui,sans-serif
+}
 .wbs-header img{width:22px;height:22px;border-radius:999px;object-fit:cover}
 .wbs-x{margin-left:auto;color:#fff;opacity:.9;cursor:pointer;font-size:18px}
 
@@ -165,10 +157,23 @@
 .wbs-row.me .wbs-avatar{display:none}
 .wbs-avatar{width:28px;height:28px;border-radius:999px;object-fit:cover}
 
-.wbs-bubble{padding:8px 10px;border-radius:12px;max-width:78%;border:1px solid var(--border);box-shadow:0 1px 2px rgba(0,0,0,.04);color:var(--text)}
+.wbs-bubble{
+  padding:8px 10px;
+  border-radius:12px;
+  max-width:78%;
+  border:1px solid var(--border);
+  box-shadow:0 1px 2px rgba(0,0,0,.04);
+  color:var(--text)
+}
 .wbs-bubble.user{background:var(--userBg)}
 .wbs-bubble.bot{background:#fff}
-.wbs-name{font-size:12px;margin-bottom:3px;color:var(--text);font-weight:700;font-family:"Encode Sans SC",system-ui,sans-serif}
+.wbs-name{
+  font-size:12px;
+  margin-bottom:3px;
+  color:var(--text);
+  font-weight:700;
+  font-family:"Encode Sans SC",system-ui,sans-serif
+}
 .wbs-bubble div{white-space:pre-wrap;word-wrap:break-word}
 .wbs-bubble.bot div{font-size:13px;line-height:1.45}
 .wbs-bubble.user div{font-size:14px;line-height:1.45}
@@ -178,16 +183,67 @@
 .wbs-bubble ul li p{margin:0}
 .wbs-bubble a{color:var(--brandFg);text-decoration:underline;word-break:break-word}
 
-.wbs-chips{display:flex;flex-direction:column;gap:8px;padding:8px 10px 10px 10px;align-items:flex-end}
-.wbs-chip{display:inline-flex;width:auto;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:10px 12px;font-size:13px;cursor:pointer}
+.wbs-chips{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:8px 10px 10px 10px;
+  align-items:flex-end
+}
+.wbs-chip{
+  display:inline-flex;
+  width:auto;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:999px;
+  padding:10px 12px;
+  font-size:13px;
+  cursor:pointer
+}
 .wbs-chip:hover{background:rgba(255,158,0,.15)}
 
-.wbs-inputrow{display:flex;align-items:center;border-top:1px solid var(--border);background:#fff}
-.wbs-inputrow input{flex:1;padding:12px;border:0;outline:none;font-size:14px}
-.wbs-send{background:var(--brandBg);color:#fff;border:0;width:44px;height:44px;margin-right:8px;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.wbs-inputrow{
+  display:flex;
+  align-items:center;
+  border-top:1px solid var(--border);
+  background:#fff
+}
+.wbs-inputrow input{
+  flex:1;
+  padding:12px;
+  border:0;
+  outline:none;
+  font-size:14px
+}
+.wbs-send{
+  background:var(--brandBg);
+  color:#fff;
+  border:0;
+  width:44px;
+  height:44px;
+  margin-right:8px;
+  border-radius:10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer
+}
 
-.wbs-footer{display:flex;justify-content:center;gap:16px;align-items:center;border-top:1px solid var(--border);padding:8px 12px;background:#fff}
-.wbs-footer a{font-size:12px;color:#555;text-decoration:underline;cursor:pointer}
+.wbs-footer{
+  display:flex;
+  justify-content:center;
+  gap:16px;
+  align-items:center;
+  border-top:1px solid var(--border);
+  padding:8px 12px;
+  background:#fff
+}
+.wbs-footer a{
+  font-size:12px;
+  color:#555;
+  text-decoration:underline;
+  cursor:pointer
+}
 .wbs-footer a:hover{color:var(--brandFg)}
 
 .wbs-fade-out{animation:wbsFadeOut .6s ease forwards}
@@ -200,11 +256,11 @@
 
       /* --- DOM --- */
       const root = document.createElement('div');
-      root.id = 'wbs-root-v2';
+      root.id = 'wbs-root';
       shadow.append(style, root);
 
       const launcher = c('button');
-      launcher.id = 'wbs-launcher-v2';
+      launcher.id = 'wbs-launcher';
       const icon = c('img');
       icon.src = CHAT_ICON;
       const label = c('span', null, 'Chatta med oss');
@@ -231,6 +287,7 @@
       const foot = c('div', 'wbs-footer');
       const priv = c('a', null, 'Integritetspolicy');
       priv.href = PRIVACY_URL;
+      priv.target = '_blank';
       const clear = c('a', null, 'Rensa chatten');
 
       inpRow.append(inp, send);
@@ -239,35 +296,41 @@
       root.appendChild(panel);
 
       /* --- CTA helper --- */
-      function addCTAChip(labelTxt, url) {
+      function addCTAChip(label, url) {
         chips.innerHTML = '';
         const chip = document.createElement('button');
         chip.className = 'wbs-chip wbs-chip-anim';
-        chip.textContent = labelTxt;
+        chip.textContent = label;
         chip.onclick = () => {
-          window.gtag?.('event', 'wbs_chat_cta', { cta: labelTxt });
-          window.plausible?.('wbs_chat_cta', { props: { cta: labelTxt } });
+          window.gtag?.('event', 'wbs_chat_cta', { cta: label });
+          window.plausible?.('wbs_chat_cta', { props: { cta: label } });
           window.open(url, '_blank');
         };
         chips.append(chip);
       }
 
       /* --- Session + memory --- */
-      const SESSION_KEY = 'wbs_session_id_v2';
-      let sessionId = localStorage.getItem(SESSION_KEY);
-      if (!sessionId) {
-        sessionId = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
-        localStorage.setItem(SESSION_KEY, sessionId);
+      const SESSION_KEY = 'wbs_session_id';
+      let sessionId = null;
+      try {
+        sessionId = localStorage.getItem(SESSION_KEY);
+      } catch {
+        sessionId = null;
       }
-      let SAVED_LOG_KEY = 'wbs_chat_log_v2_' + sessionId;
+      if (!sessionId) {
+        sessionId = (window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
+        try { localStorage.setItem(SESSION_KEY, sessionId); } catch { }
+      }
+
+      let SAVED_LOG_KEY = 'wbs_chat_log_' + sessionId;
       let chatMemory = [];
       let replaying = false;
 
       try {
         const saved = localStorage.getItem(SAVED_LOG_KEY);
-        if (saved) chatMemory = JSON.parse(saved);
+        if (saved) chatMemory = JSON.parse(saved) || [];
       } catch (e) {
-        console.warn('[WBS v2] failed to parse saved log', e);
+        console.warn('[WBS] failed to parse saved log', e);
         chatMemory = [];
       }
 
@@ -279,35 +342,135 @@
         chips.append(chip);
       });
 
+      /* === Enkelt Markdown/HTML-rendering === */
+      function renderMarkdown(txt) {
+        if (!txt) return '';
+
+        let s = String(txt);
+
+        // Normalisering
+        s = s
+          .replace(/\r\n/g, '\n')
+          .replace(/\u00A0/g, ' ')
+          .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
+
+        // Länkar [text](url) → <a>
+        s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+
+        // Fetstil + kursiv
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+        const lines = s.split('\n');
+        const out = [];
+        let inUL = false;
+        let inOL = false;
+        let para = [];
+
+        const flushLists = () => {
+          if (inUL) { out.push('</ul>'); inUL = false; }
+          if (inOL) { out.push('</ol>'); inOL = false; }
+        };
+        const flushPara = () => {
+          if (para.length) {
+            out.push('<p>' + para.join('<br>') + '</p>');
+            para = [];
+          }
+        };
+
+        const BREAKS_LIST = /^(?:💡\s*)?Tips\b|(?:📰\s*)?Relaterad\s+läsning\b|Källa:/i;
+
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (!line) {
+            flushPara();
+            flushLists();
+            continue;
+          }
+
+          const mUL = /^[-*•]\s+(.+)$/.exec(line);
+          const mOL = /^\d+\.\s+(.+)$/.exec(line);
+
+          // "Tips", "Relaterad läsning", "Källa" bryter alltid listor
+          if ((inUL || inOL) && BREAKS_LIST.test(line)) {
+            flushLists();
+            flushPara();
+            out.push('<p><strong>' + line + '</strong></p>');
+            continue;
+          }
+
+          if (mUL) {
+            flushPara();
+            if (!inUL) {
+              flushLists();
+              inUL = true;
+              out.push('<ul>');
+            }
+            out.push('<li>' + mUL[1] + '</li>');
+            continue;
+          }
+
+          if (mOL) {
+            flushPara();
+            if (!inOL) {
+              flushLists();
+              inOL = true;
+              out.push('<ol>');
+            }
+            out.push('<li>' + mOL[1] + '</li>');
+            continue;
+          }
+
+          // Vanlig text → paragraf
+          para.push(line);
+        }
+
+        flushPara();
+        flushLists();
+
+        return out.join('\n');
+      }
+
       /* --- Add message --- */
       let lastBotTxt = '';
       function addMsg(who, txt, persist = true) {
+        if (!txt && txt !== '') return;
+
         if (who === 'Bot') {
           const normalized = String(txt).trim().replace(/\s+/g, ' ');
           if (normalized && normalized === lastBotTxt) return;
           lastBotTxt = normalized;
         }
+
         const row = c('div', 'wbs-row' + (who === 'Du' ? ' me' : ''));
         if (who === 'Bot') {
           const a = c('img', 'wbs-avatar');
           a.src = AVATAR_URL;
           row.append(a);
         }
-        const b = c('div', 'wbs-bubble ' + (who === 'Du' ? 'user' : 'bot'));
-        const n = c('div', 'wbs-name', who === 'Du' ? 'Du' : BRAND_NAME);
+        const bubble = c('div', 'wbs-bubble ' + (who === 'Du' ? 'user' : 'bot'));
+        const name = c('div', 'wbs-name', who === 'Du' ? 'Du' : BRAND_NAME);
         const d = document.createElement('div');
-        if (who === 'Bot') d.innerHTML = renderMessageToHtml(txt);
-        else d.textContent = txt;
-        b.append(n, d);
-        row.append(b);
+
+        if (who === 'Bot') {
+          d.innerHTML = renderMarkdown(txt);
+        } else {
+          d.textContent = txt;
+        }
+
+        bubble.append(name, d);
+        row.append(bubble);
         log.append(row);
         log.scrollTop = log.scrollHeight;
         if (who === 'Bot') requestAnimationFrame(() => row.classList.add('wbs-fade-in'));
 
         if (persist && !replaying) {
           chatMemory.push({ who, txt });
-          try { localStorage.setItem(SAVED_LOG_KEY, JSON.stringify(chatMemory)); }
-          catch (e) { console.warn('[WBS v2] failed to save chat log', e); }
+          try {
+            localStorage.setItem(SAVED_LOG_KEY, JSON.stringify(chatMemory));
+          } catch (e) {
+            console.warn('[WBS] failed to save chat log', e);
+          }
         }
       }
 
@@ -370,6 +533,7 @@
         a.src = AVATAR_URL;
         t.append(a, d);
         log.append(t);
+        log.scrollTop = log.scrollHeight;
 
         try {
           const r = await fetch(ENDPOINT, {
@@ -385,13 +549,13 @@
             const lower = m.toLowerCase();
             const isLocal = lower.includes('lokal seo');
             const url = isLocal ? LEAD_LOCAL_URL : LEAD_SEO_URL;
-            const labelTxt = isLocal ? 'Gör en gratis lokal SEO-analys' : 'Gör en gratis SEO-analys';
-            addCTAChip(labelTxt, url);
+            const label = isLocal ? 'Gör en gratis lokal SEO-analys' : 'Gör en gratis SEO-analys';
+            addCTAChip(label, url);
           }
           if (data.booking_intent) addCTAChip('Boka möte direkt', BOOKING_URL);
 
         } catch (e) {
-          console.error('[WBS chat v2] fetch error:', e);
+          console.error('[WBS chat] fetch error:', e);
           t.remove();
           addMsg('Bot', '(Tekniskt fel – försök igen.)');
         }
@@ -413,23 +577,44 @@
       /* --- Clear chat --- */
       clear.onclick = () => {
         const oldKey = SAVED_LOG_KEY;
+
         fetch('https://web-chatbot-beta.vercel.app/api/clear', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId })
-        }).catch(() => {});
+        }).catch(() => { });
 
         log.innerHTML = '';
-        localStorage.removeItem(oldKey);
+        try { localStorage.removeItem(oldKey); } catch { }
         chatMemory = [];
 
-        localStorage.removeItem(SESSION_KEY);
-        sessionId = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
-        localStorage.setItem(SESSION_KEY, sessionId);
-        SAVED_LOG_KEY = 'wbs_chat_log_v2_' + sessionId;
+        try { localStorage.removeItem(SESSION_KEY); } catch { }
+        sessionId = (window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
+        try {
+          localStorage.setItem(SESSION_KEY, sessionId);
+        } catch { }
+        SAVED_LOG_KEY = 'wbs_chat_log_' + sessionId;
 
         addMsg('Bot', 'Chatten har rensats. Börja om när du vill!', false);
+
+        setTimeout(() => {
+          const bubbles = log.querySelectorAll('.wbs-row');
+          if (!bubbles.length) return;
+
+          const last = bubbles[bubbles.length - 1];
+          last.classList.add('wbs-fade-out');
+
+          (window.requestIdleCallback || ((cb) => setTimeout(cb, 400)))(() => {
+            try {
+              last.remove();
+              addMsg('Bot', 'Är det något mer jag kan hjälpa dig med?');
+            } catch (err) {
+              console.warn('[WBS clear fade] error', err);
+            }
+          });
+        }, 2000);
       };
+
     });
   }
 })();
