@@ -343,7 +343,7 @@
       });
 
       /* === Enkelt Markdown/HTML-rendering === */
-      function renderMarkdown(txt) {
+            function renderMarkdown(txt) {
         if (!txt) return '';
 
         let s = String(txt);
@@ -354,7 +354,19 @@
           .replace(/\u00A0/g, ' ')
           .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
 
-        // Länkar [text](url) → <a>
+        // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
+        s = s.replace(
+          /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*(?:\r?\n)?\s*\2/g,
+          '[$1]($2)'
+        );
+
+        // 2) "SEOhttps://...webbyrasigtuna.se..." → "[SEO](https://...)" (m.fl. tjänster)
+        s = s.replace(
+          /\b(SEO|Lokal SEO|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys)\s*(https?:\/\/[^\s)]+webbyrasigtuna\.se[^\s)]*)/gi,
+          '[$1]($2)'
+        );
+
+        // 3) Markdown-länkar [text](url) → HTML-länkar
         s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
 
         // Fetstil + kursiv
