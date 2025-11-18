@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Backend v5.1.0 (generiska lead-magneter) */
+/* Webbyrå Sigtuna Chat – Backend v5.2.0 (intent-spec: action/content + magnet-typer) */
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 
@@ -240,39 +240,127 @@ function mapLabel(labelRaw = '') {
   return null;
 }
 
-/* ========== Lead-magneter: generisk matcher ========== */
-function pickLeadMagnet(leadMagnets, messageLower) {
-  if (!Array.isArray(leadMagnets) || !leadMagnets.length) return null;
+/* ========== Intent-spec: action/content + lead magnets ========== */
 
-  const tokens = tokenizeSv(messageLower);
-  let best = null;
-  let bestScore = -1;
+/* 1) Intent från användarens meddelande */
+const ACTION_INTENT_PATTERNS = [
+  // Pris / affär
+  /\bpris(er|et|nivå|bild)?\b/i,
+  /\bkostnad(er|en)?\b/i,
+  /\bavgift(er|en)?\b/i,
+  /\btimpris\b/i,
+  /\bpaketpris\b/i,
+  /\bbudget\b/i,
+  /\bprisförslag\b/i,
+  /\boffert(förslag)?\b/i,
 
-  for (const lm of leadMagnets) {
-    if (!lm || !lm.url) continue;
-    const label = (lm.label || '').toLowerCase();
-    const key   = (lm.key   || '').toLowerCase();
-    const text  = `${label} ${key}`.trim();
-    const ltokens = tokenizeSv(text);
+  // Projekt / hjälp
+  /\bstarta\b.*\b(projekt|webb|hemsida|kampanj)\b/i,
+  /\bdra igång\b/i,
+  /\bstarta upp\b/i,
+  /\bkomma igång\b/i,
+  /\bhjälp med\b/i,
+  /\bkan ni hjälpa\b/i,
+  /\bkan du hjälpa\b/i,
+  /\bta fram\b/i,
+  /\bbygga\b/i,
+  /\bfixa\b/i,
+  /\bskapa\b/i,
+  /\bimplementera\b/i,
 
-    let score = 0;
-    for (const t of tokens) {
-      if (ltokens.includes(t)) score += 1;
-    }
+  // Analys / granskning
+  /\banalys(er)?\b/i,
+  /\bgranskning\b/i,
+  /\baudit\b/i,
+  /\bgenomgång\b/i,
+  /\bbedömning\b/i,
+  /\bhälsokontroll\b/i,
+  /\brevision\b/i,
+  /\bbesiktning\b/i,
 
-    // Liten bonus om label/key innehåller typiska leadord
-    if (/\b(pris|offert|guide|analys|checklista|webbplats|strategi|rådgivning|demo)\b/i.test(label)) {
-      score += 0.3;
-    }
+  // Rådgivning
+  /\brådgivning\b/i,
+  /\brådgivningsmöte\b/i,
+  /\bstrategimöte\b/i,
+  /\bstrategisamtal\b/i,
+  /\bkonsultation\b/i,
+  /\bcoaching\b/i,
 
-    if (score > bestScore) {
-      bestScore = score;
-      best = lm;
-    }
+  // Engelska
+  /\bquote\b/i,
+  /\bpricing\b/i,
+  /\bprice\b/i,
+  /\boffer\b/i,
+  /\bproposal\b/i,
+  /\breview\b/i,
+  /\bassessment\b/i,
+  /\bconsultation\b/i,
+  /\bstrategy call\b/i,
+  /\bstrategy session\b/i,
+
+  // SEO-variant: explicit förbättra/optimera/öka
+  /\bseo\b.*\b(förbättra|optimera|öka)\b/i,
+];
+
+const CONTENT_INTENT_PATTERNS = [
+  // Format (svenska)
+  /\bguide(n)?\b/i,
+  /\bhandbok\b/i,
+  /\bmanual\b/i,
+  /\be-?bok\b/i,
+  /\bebok\b/i,
+  /\bpdf\b/i,
+  /\bbroschyr\b/i,
+  /\brapport\b/i,
+  /\bwhitepaper\b/i,
+  /\bchecklista\b/i,
+  /\bmall(ar)?\b/i,
+  /\btemplate\b/i,
+  /\bplaybook\b/i,
+  /\bkurs\b/i,
+  /\bwebbkurs\b/i,
+  /\butbildning\b/i,
+  /\bwebinar\b/i,
+  /\bvideokurs\b/i,
+
+  // Handling (svenska)
+  /\bladda ner\b/i,
+  /\bladda ned\b/i,
+  /\bdownload\b/i,
+  /\bskicka (material|info|guid(e|en)?)\b/i,
+  /\bhar ni (någon|en)\s+(guide|pdf|mall|checklista)\b/i,
+
+  // Engelska
+  /\bebook\b/i,
+  /\be-book\b/i,
+  /\bwhitepaper\b/i,
+  /\bchecklist\b/i,
+  /\bguide\b/i,
+  /\bplaybook\b/i,
+  /\bdownloadable\b/i,
+];
+
+function hasIntent(lower, patterns) {
+  return patterns.some(rx => rx.test(lower));
+}
+
+/* 2) Klassificering av lead magnets utifrån label → magnet_type */
+function classifyMagnetType(labelRaw = '') {
+  const label = (labelRaw || '').toLowerCase();
+
+  if (!label) return 'generic';
+
+  // Content-typer
+  if (/(guide|guiden|handbok|manual|e-?bok|ebook|pdf|broschyr|rapport|whitepaper|checklista|checklist|mall|template|playbook|kurs|webbkurs|utbildning|webinar|videokurs)/i.test(label)) {
+    return 'content';
   }
 
-  // Om allt får 0 → ta första som fallback
-  return best || leadMagnets[0];
+  // Action-typer
+  if (/(analys|audit|genomgång|granskning|bedömning|hälsokontroll|besiktning|rådgivning|rådgivningsmöte|strategimöte|strategisamtal|konsultation|coaching|offert|offertförslag|prisförslag|demo|test|prova på|kostnadsfri genomgång|kostnadsfritt möte)/i.test(label)) {
+    return 'action';
+  }
+
+  return 'generic';
 }
 
 /* ========== Huvud-handler ========== */
@@ -384,8 +472,8 @@ ${llmsContext}
 
     /* ---------- Normalisering ---------- */
     reply = reply
-      .replace(/\u00A0/g, ' ')                    // NBSP → space
-      .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-') // snyggstreck → '-'
+      .replace(/\u00A0/g, ' ')
+      .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-')
       .replace(/\blokal seo\b/gi, 'Lokal SEO')
       .replace(/\bseo\b/gi, 'SEO')
       .replace(/\bwordpress\b/gi, 'WordPress');
@@ -405,7 +493,6 @@ ${llmsContext}
     };
 
     const infoTriggers = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet)/i;
-    const leadTriggers = /(pris|offert|strategi|analys|möte|projekt|erbjudande|paket|audit|granskning)/i;
 
     const lower = message.toLowerCase();
     const inlineLinkedKeys = new Set();
@@ -470,7 +557,7 @@ ${llmsContext}
       /\[WordPress\]\((https?:\/\/[^\s)]+webbplatsunderhall[^\s)]*)\)/gi,
       '[WordPress-underhåll]($1)'
     );
-    // "våra [SEO](...sokmotoroptimering...)" → "våra [SEO-tjänster](...)"
+    // "våra [SEO](...sokmotoroptimering...)" → "våra [SEO-tjänster]($1)"
     reply = reply.replace(
       /\bvåra\s+\[SEO\]\((https?:\/\/[^)]*sokmotoroptimering[^)]*)\)/gi,
       'våra [SEO-tjänster]($1)'
@@ -573,38 +660,65 @@ ${llmsContext}
       }
     }
 
-    /* ========== Lead-intent + generiska lead-magneter ========== */
-    const genericSeoImprove = /\bseo\b.*\b(förbättra|optimera|öka)\b/i.test(lower);
-    const leadTriggered = leadTriggers.test(lower) || lower.includes('lokal seo') || genericSeoImprove;
+    /* ========== Lead-intent enligt nya specifikationen ========== */
 
-    const leadMagnets = Array.isArray(siteConfig?.lead_magnets)
+    // 1) Magneter från siteConfig
+    const leadMagnetsRaw = Array.isArray(siteConfig?.lead_magnets)
       ? siteConfig.lead_magnets
       : [];
 
-    let chosenLead = null;
+    const leadMagnets = leadMagnetsRaw
+      .filter(lm => lm && typeof lm === 'object' && lm.key && lm.url)
+      .map(lm => ({
+        ...lm,
+        magnet_type: classifyMagnetType(lm.label || ''),
+      }));
 
-    if (leadTriggered) {
-      if (leadMagnets.length) {
-        // Generisk, kundstyrd lead-magnet
-        chosenLead = pickLeadMagnet(leadMagnets, lower);
-        if (chosenLead && chosenLead.url) {
-          const label = chosenLead.label || 'Läs mer här';
-          if (!reply.includes(chosenLead.url)) {
-            reply += `\n\n🤝 Vill du ta nästa steg? Här är ett förslag: [${label}](${chosenLead.url})`;
-          }
-        }
-      } else {
-        // Fallback till befintlig SEO-analys-CTA (för bakåtkompabilitet)
-        const isLocal = lower.includes('lokal seo');
-        const ctaUrl   = isLocal
-          ? 'https://webbyrasigtuna.se/gratis-lokal-seo-analys/'
-          : 'https://webbyrasigtuna.se/gratis-seo-analys/';
-        const ctaLabel = isLocal ? 'gratis lokal SEO-analys' : 'gratis SEO-analys';
-        if (!reply.includes(ctaUrl) && sitemapUrls.has(ctaUrl)) {
-          reply += `\n\n🤝 Vill du ha en ${ctaLabel}? Ansök här: [${ctaUrl}](${ctaUrl})`;
-        }
+    // 2) Intent i användarmeddelandet
+    const action_intent  = hasIntent(lower, ACTION_INTENT_PATTERNS);
+    const content_intent = hasIntent(lower, CONTENT_INTENT_PATTERNS);
+
+    let lead_type = null;
+    if (content_intent) {
+      lead_type = 'content';
+    } else if (action_intent) {
+      lead_type = 'action';
+    }
+
+    let lead_intent = !!lead_type;
+    let lead_key = null;
+
+    if (lead_intent && leadMagnets.length) {
+      const pickByType = (type) => {
+        const found = leadMagnets.find(lm => lm.magnet_type === type);
+        return found ? found.key : null;
+      };
+
+      if (lead_type === 'content') {
+        // 3.1: content → content-magnet → generic → fallback lead1
+        lead_key =
+          pickByType('content') ||
+          pickByType('generic') ||
+          (leadMagnets[0] && leadMagnets[0].key) ||
+          null;
+      } else if (lead_type === 'action') {
+        // 3.2: action → action-magnet → generic → fallback lead1
+        lead_key =
+          pickByType('action') ||
+          pickByType('generic') ||
+          (leadMagnets[0] && leadMagnets[0].key) ||
+          null;
       }
     }
+
+    // Om vi inte har magneter alls är lead_intent meningslös → nolla
+    if (!leadMagnets.length) {
+      lead_intent = false;
+      lead_key = null;
+    }
+
+    // Viktigt: vi lägger inte längre in lead-magnet-länken direkt i svaret här.
+    // Frontend visar rätt knapp via lead_intent + lead_key.
 
     // Sista safety: ta bort kvarvarande orphan-hakparenteser
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, '$1');
@@ -622,9 +736,15 @@ ${llmsContext}
     await kv.rpush(key, JSON.stringify({ role: 'assistant', content: reply }));
     await kv.expire(key, 60 * 60 * 24); // 24 h
 
-    const booking_intent = /boka|möte|call|meeting|upptäcktsmöte/i.test(message);
-    const lead_intent = !!(leadTriggered);
-    const lead_key   = chosenLead?.key || null;
+    /* Booking-intent (uppdaterad enligt specs) */
+    const booking_intent =
+      /\b(boka|bokar|bokning|bokningsförfrågan)\b/i.test(lower) ||
+      /\b(möte|möten|mötesförslag)\b/i.test(lower) ||
+      /\b(träff|samtal|telefonsamtal|videosamtal|videomöte)\b/i.test(lower) ||
+      /\b(rådgivning|rådgivningssamtal|rådgivningsmöte)\b/i.test(lower) ||
+      /\b(konsultation|konsultationstid)\b/i.test(lower) ||
+      /\b(introduktion|introcall|upptäcktsmöte)\b/i.test(lower) ||
+      /discovery call|intro call|book a call|book a meeting|schedule a call|schedule a meeting/i.test(lower);
 
     return res.status(200).json({ reply, booking_intent, lead_intent, lead_key });
   } catch (err) {
