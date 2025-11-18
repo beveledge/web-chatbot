@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.1.3 (config från WP + generisk markdown + färger) */
+/* Webbyrå Sigtuna Chat – Frontend v1.1.4 (config från WP + generisk markdown + färger) */
 (function () {
   'use strict';
 
@@ -74,6 +74,29 @@
       const BORDER_COL = colors.border     || '#e5e7eb';
       const USER_BG    = colors.user_bg    || '#e8efff';
       const WHITE_COL  = '#ffffff';
+
+      // Hjälpare: HEX → RGB (för hover-effekter)
+      function hexToRgb(hex) {
+        if (!hex || typeof hex !== 'string') {
+          return { r: 255, g: 158, b: 0 };
+        }
+        let h = hex.replace('#', '').trim();
+        const m = /^([0-9a-f]{3}|[0-9a-f]{6})$/i.test(h);
+        if (!m) return { r: 255, g: 158, b: 0 };
+        if (h.length === 3) {
+          h = h.split('').map((ch) => ch + ch).join('');
+        }
+        const num = parseInt(h, 16);
+        return {
+          r: (num >> 16) & 255,
+          g: (num >> 8) & 255,
+          b: num & 255,
+        };
+      }
+
+      const brandRgb = hexToRgb(BRAND_FG);
+      const CHIP_HOVER_BG       = `rgba(${brandRgb.r},${brandRgb.g},${brandRgb.b},.15)`;
+      const LAUNCHER_HOVER_GLOW = `0 0 12px rgba(${brandRgb.r},${brandRgb.g},${brandRgb.b},.5)`;
 
       const CTA_TEXT               = bookingLabel;
       const REPLACE_CHIPS_WITH_CTA = true;
@@ -155,7 +178,7 @@
   opacity:0
 }
 #wbs-launcher.wbs-visible{animation:wbs-fadeSlideIn .6s ease forwards}
-#wbs-launcher:hover{box-shadow:0 0 12px rgba(255,158,0,.5)}
+#wbs-launcher:hover{box-shadow:${LAUNCHER_HOVER_GLOW}}
 #wbs-launcher img{width:32px;height:32px;display:block}
 #wbs-launcher span{font-size:14px}
 #wbs-launcher.wbs-close{background:var(--brandBg);color:var(--white);border-color:var(--brandBg)}
@@ -250,7 +273,7 @@
   font-size:13px;
   cursor:pointer
 }
-.wbs-chip:hover{background:rgba(255,158,0,.15)}
+.wbs-chip:hover{background:${CHIP_HOVER_BG}}
 
 .wbs-inputrow{
   display:flex;
