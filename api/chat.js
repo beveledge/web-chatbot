@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Backend v5.2.0 (intent-spec: action/content + magnet-typer) */
+/* Webbyrå Sigtuna Chat – Backend v5.3.0 (WP-LLMS endpoints + privacy_url) */
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 
@@ -28,13 +28,16 @@ function setCors(req, res) {
   }
 }
 
-/* ========== Bas-URL (site) & config-endpoint ========== */
-const LLMS_BASE        = 'https://webbyrasigtuna.se';
-const LLMS_INDEX_URL   = `${LLMS_BASE}/llms.txt`;
-const LLMS_FULL_URL    = `${LLMS_BASE}/llms-full.txt`;
-const LLMS_FULL_SV_URL = `${LLMS_BASE}/llms-full-sv.txt`;
+/* ========== Bas-URL (site) & WP-endpoints ========== */
+const LLMS_BASE = 'https://webbyrasigtuna.se';
 
-const CONFIG_URL       = `${LLMS_BASE}/wp-json/wbs-ai/v1/config`;
+// LLMS via WordPress REST API
+const LLMS_INDEX_URL   = `${LLMS_BASE}/wp-json/wbs-ai/v1/llms`;
+const LLMS_FULL_URL    = `${LLMS_BASE}/wp-json/wbs-ai/v1/llms-full`;
+const LLMS_FULL_SV_URL = `${LLMS_BASE}/wp-json/wbs-ai/v1/llms-full-sv`;
+
+// Site-config via WordPress REST API
+const CONFIG_URL = `${LLMS_BASE}/wp-json/wbs-ai/v1/config`;
 
 /* ========== LLMS-konfiguration ========== */
 const LLMS_TTL         = 60 * 60 * 12; // 12h cache
@@ -254,7 +257,7 @@ const ACTION_INTENT_PATTERNS = [
   /\bprisförslag\b/i,
   /\boffert(förslag)?\b/i,
 
-  // Projekt / hjälp
+  // Projekt / hjälp (mer explicita triggers – generella verb borttagna)
   /\bstarta\b.*\b(projekt|webb|hemsida|kampanj)\b/i,
   /\bdra igång\b/i,
   /\bstarta upp\b/i,
@@ -262,11 +265,6 @@ const ACTION_INTENT_PATTERNS = [
   /\bhjälp med\b/i,
   /\bkan ni hjälpa\b/i,
   /\bkan du hjälpa\b/i,
-  /\bta fram\b/i,
-  /\bbygga\b/i,
-  /\bfixa\b/i,
-  /\bskapa\b/i,
-  /\bimplementera\b/i,
 
   // Analys / granskning
   /\banalys(er)?\b/i,
@@ -746,7 +744,20 @@ ${llmsContext}
       /\b(introduktion|introcall|upptäcktsmöte)\b/i.test(lower) ||
       /discovery call|intro call|book a call|book a meeting|schedule a call|schedule a meeting/i.test(lower);
 
-    return res.status(200).json({ reply, booking_intent, lead_intent, lead_key });
+    // Privacy policy-länk från config + fallback
+    const privacy_url =
+      (typeof siteConfig?.privacy === 'string' && siteConfig.privacy) ||
+      (typeof siteConfig?.privacy_url === 'string' && siteConfig.privacy_url) ||
+      (siteConfig?.pages && typeof siteConfig.pages.integritet === 'string' && siteConfig.pages.integritet) ||
+      'https://webbyrasigtuna.se/integritetspolicy/';
+
+    return res.status(200).json({
+      reply,
+      booking_intent,
+      lead_intent,
+      lead_key,
+      privacy_url,
+    });
   } catch (err) {
     console.error('Chat error:', err);
     return res.status(500).json({ error: 'Server error' });
