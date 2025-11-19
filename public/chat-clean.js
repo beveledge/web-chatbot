@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.3.1 (config från WP + generisk markdown + lead_magnets + powered-by) */
+/* Webbyrå Sigtuna Chat – Frontend v1.3.2 (multitenant: siteId skickas till backend) */
 (function () {
   'use strict';
 
@@ -33,7 +33,7 @@
       /* --- Config (nu baserad på WP-config) --- */
       const baseUrl   = config?.base_url   || 'https://webbyrasigtuna.se';
       const brandName = config?.brand_name || 'Webbyrå Sigtuna';
-
+      
       const bookingUrl   = config?.primary_cta?.url   || (baseUrl + '/kontakt/');
       const bookingLabel = config?.primary_cta?.label || 'Boka ett upptäcktsmöte';
 
@@ -54,6 +54,12 @@
       const PRIVACY_URL    = privacyUrl;
       const BRAND_NAME     = brandName + ' Chat';
 
+      // 👇 Multitenant: siteId tas från config / global / domän
+      const SITE_ID =
+        (config && (config.site_id || config.siteId)) ||
+        (window.WBS_AI && window.WBS_AI.siteId) ||
+        (window.location && window.location.hostname.replace(/^www\./, ''));
+
       // Avatar, chat-ikon och förslag från config
       const AVATAR_URL = config?.avatar_url
         || 'https://webbyrasigtuna.se/wp-content/uploads/2024/12/andreas-seifert-beveled-edge-webbyra-sigtuna.png';
@@ -65,8 +71,8 @@
         ? config.suggestions
         : [
             'Vilka tjänster erbjuder ni?',
-            'Erbjuder ni SEO-tjänster?',
-            'Erbjuder ni WordPress-underhåll?'
+            'Hur kan ni hjälpa oss?',
+            'Hur fungerar er tjänst?'
           ];
 
       const CTA_TEXT               = bookingLabel;
@@ -320,11 +326,12 @@
       root.id = 'wbs-root';
       shadow.append(style, root);
 
-      const launcher = c('button');
+      const launcher = document.createElement('button');
       launcher.id = 'wbs-launcher';
-      const icon = c('img');
+      const icon = document.createElement('img');
       icon.src = CHAT_ICON;
-      const label = c('span', null, 'Chatta med oss');
+      const label = document.createElement('span');
+      label.textContent = 'Chatta med oss';
       launcher.append(icon, label);
       root.appendChild(launcher);
       setTimeout(() => launcher.classList.add('wbs-visible'), LAUNCHER_DELAY_MS);
@@ -635,10 +642,13 @@
         log.scrollTop = log.scrollHeight;
 
         try {
+          const payload = { message: m, sessionId };   // 👈 siteId-payload
+          if (SITE_ID) payload.siteId = SITE_ID;       // 👈 lägg till siteId om det finns
+
           const r = await fetch(ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: m, sessionId })
+            body: JSON.stringify(payload)
           });
           const data = await r.json().catch(() => ({ reply: '(Kunde inte tolka svar)' }));
           t.remove();
@@ -690,10 +700,13 @@
       clear.onclick = () => {
         const oldKey = SAVED_LOG_KEY;
 
+        const clearPayload = { sessionId };   // 👈 siteId även till /clear
+        if (SITE_ID) clearPayload.siteId = SITE_ID;
+
         fetch('https://web-chatbot-beta.vercel.app/api/clear', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId })
+          body: JSON.stringify(clearPayload)
         }).catch(() => { });
 
         log.innerHTML = '';
