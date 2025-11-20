@@ -1,4 +1,4 @@
-/* Multi-tenant Chat Backend v6.1.0 (generic, WP-config-driven) */
+/* Multi-tenant Chat Backend v6.2.0 (generic, WP-config-driven) */
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 
@@ -6,16 +6,19 @@ import OpenAI from 'openai';
 /**
  * siteId → baseUrl (WordPress-sajt)
  * Lägg till en rad per kund. På sikt kan detta ligga i databas/secret store.
+ *
+ * Viktigt: siteId ska matcha det som widgeten skickar, dvs normalt domänen utan "www".
+ * Exempel: "webbyrasigtuna.se", "market-it.eu", etc.
  */
 const TENANTS = {
-  webbyrasigtuna: {
+  'webbyrasigtuna.se': {
     baseUrl: 'https://webbyrasigtuna.se',
   },
-  marketit: {
-    baseUrl: 'https://market-it.eu/',
+  'market-it.eu': {
+    baseUrl: 'https://market-it.eu',
   },
   // exempel:
-  // "kund123": { baseUrl: "https://kundensajt.se" },
+  // "kund123.se": { baseUrl: "https://kund123.se" },
 };
 
 function getTenant(siteId) {
@@ -105,18 +108,43 @@ function filterHost(urls, host) {
 }
 
 /* ========== LLMS-hämtning & cache (per tenant) ========== */
-async function loadKVOrFetch(key, url, ttlSeconds) {
+/**
+ * mode:
+ *  - "text"         → hämta ren text via r.text()
+ *  - "json-content" → tolka JSON och ta json.content (WP-LLMS endpoints)
+ */
+async function loadKVOrFetch(key, url, ttlSeconds, mode = 'text') {
   if (!url) return '';
   try {
     const cached = await kv.get(key);
     if (typeof cached === 'string' && cached.length) return cached;
   } catch {}
+
   try {
-    const text = await fetchText(url);
-    try {
-      await kv.set(key, text, { ex: ttlSeconds });
-    } catch {}
-    return text;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`${url} -> ${r.status}`);
+
+    let value = '';
+
+    if (mode === 'json-content') {
+      const json = await r.json();
+      if (json && typeof json === 'object' && typeof json.content === 'string') {
+        value = json.content;
+      } else if (typeof json === 'string') {
+        // i händelse av framtida ändring där endpointen returnerar ren text i JSON
+        value = json;
+      }
+    } else {
+      value = await r.text();
+    }
+
+    if (value) {
+      try {
+        await kv.set(key, value, { ex: ttlSeconds });
+      } catch {}
+    }
+
+    return value;
   } catch {
     return ''; // fail soft
   }
@@ -125,9 +153,14 @@ async function loadKVOrFetch(key, url, ttlSeconds) {
 /**
  * llmsConfig förväntas komma från siteConfig.llms, t.ex:
  * {
- *   index: "https://.../llms.txt"      (valfritt)
- *   full: "https://.../llms-full.txt"  (valfritt)
- *   full_sv: "https://.../llms-full-sv.txt" (valfritt)
+ *   index: "https://.../llms.txt"      (ren text)
+ *   full: "https://.../llms-full.txt"  (ren text)
+ *   full_sv: "https://.../llms-full-sv.txt" (ren text)
+ *
+ *   // eller WP-JSON-endpoints:
+ *   index: "https://.../wp-json/wbs-ai/v1/llms"
+ *   full: "https://.../wp-json/wbs-ai/v1/llms-full"
+ *   full_sv: "https://.../wp-json/wbs-ai/v1/llms-full-sv"
  * }
  *
  * Om något saknas används generiska WP-endpoints:
@@ -144,10 +177,13 @@ async function loadLLMSBundle(siteId, llmsConfig = {}, baseUrl) {
   const fullKey    = kvKey(siteId, 'llms:full');
   const fullSvKey  = kvKey(siteId, 'llms:full_sv');
 
+  // Heuristik: .txt → ren text, annars JSON med { content: ... }
+  const modeFor = (url) => (/\.txt(\?|$)/i.test(url) ? 'text' : 'json-content');
+
   const [indexTxt, fullTxt, fullSvTxt] = await Promise.all([
-    loadKVOrFetch(indexKey,  indexUrl,  LLMS_TTL),
-    loadKVOrFetch(fullKey,   fullUrl,   LLMS_TTL),
-    loadKVOrFetch(fullSvKey, fullSvUrl, LLMS_TTL),
+    loadKVOrFetch(indexKey,  indexUrl,  LLMS_TTL, modeFor(indexUrl)),
+    loadKVOrFetch(fullKey,   fullUrl,   LLMS_TTL, modeFor(fullUrl)),
+    loadKVOrFetch(fullSvKey, fullSvUrl, LLMS_TTL, modeFor(fullSvUrl)),
   ]);
 
   const svPart   = (fullSvTxt || '').slice(0, LLMS_MAX_CHARS_PER_BLOCK);
@@ -436,11 +472,13 @@ export default async function handler(req, res) {
     const trimmed = history.slice(-20);
 
     // Ladda site-config först (behövs för LLMS + sitemap + länkar)
-    const siteConfig = await loadSiteConfig(siteId, baseUrl);
+    const siteConfig = await loadSiteConfig(siteId, baseUrl) || {};
 
-    const siteName     = siteConfig?.site?.name || 'företaget';
-    const siteBaseUrl  = siteConfig?.site?.base_url || baseUrl;
-    const siteHost     = (() => {
+    const pages       = siteConfig?.pages || {};
+    const siteName    = siteConfig?.brand_name || siteConfig?.site?.name || 'företaget';
+    const siteBaseUrl = siteConfig?.base_url   || siteConfig?.site?.base_url || baseUrl;
+
+    const siteHost = (() => {
       try { return new URL(siteBaseUrl).hostname.replace(/^www\./,''); }
       catch { return null; }
     })();
@@ -624,6 +662,8 @@ ${llmsContext}
         const blogUrl =
           (typeof linksConfig.blog === 'string' && linksConfig.blog) ||
           (typeof linksConfig.news === 'string' && linksConfig.news) ||
+          (typeof pages.blog === 'string' && pages.blog) ||
+          (typeof pages.blogg === 'string' && pages.blogg) ||
           null;
         if (blogUrl && !reply.includes(blogUrl)) {
           reply += `\n\n💡 Vill du läsa fler artiklar och guider? Kolla gärna vår [artikelsida](${blogUrl}).`;
@@ -717,7 +757,8 @@ ${llmsContext}
     const privacy_url =
       (typeof siteConfig?.privacy === 'string' && siteConfig.privacy) ||
       (typeof siteConfig?.privacy_url === 'string' && siteConfig.privacy_url) ||
-      (siteConfig?.pages && typeof siteConfig.pages.integritet === 'string' && siteConfig.pages.integritet) ||
+      (pages.privacy_policy && typeof pages.privacy_policy === 'string' && pages.privacy_policy) ||
+      (pages.integritet && typeof pages.integritet === 'string' && pages.integritet) ||
       `${siteBaseUrl}/integritetspolicy/`;
 
     return res.status(200).json({
