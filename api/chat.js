@@ -625,10 +625,10 @@ ${llmsContext}
     );
 
     // 2) "( Label ) (https://…)" → "[Label](https://…)"
-    reply = reply.replace(
-      /\(\s*\[?([A-Za-zÅÄÖåäö0-9 .,:;+\-_/&%€$@!?]+?)\]?\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/g,
-      '[$1]($2)'
-    );
+    //reply = reply.replace(
+    //  /\(\s*\[?([A-Za-zÅÄÖåäö0-9 .,:;+\-_/&%€$@!?]+?)\]?\s*\)\s*\(\s*(https?:\/\/[^)]+)\s*\)/g,
+    // '[$1]($2)'
+    //);
 
     // 3) "(https://…)" → "https://…"
     reply = reply.replace(/\(\s*(https?:\/\/[^)]+)\s*\)/g, '$1');
