@@ -554,8 +554,13 @@ function renderMarkdown(txt) {
   flushPara();
   flushLists();
 
-  return out.join('\n');
-}
+  let finalOutput = out.join('\n');
+
+  // Ta bort Markdown-rubriker (### osv) och ersätt dem med fetstil
+  finalOutput = finalOutput.replace(/^#{1,6}\s+(.*)$/gm, '<strong>$1</strong>');
+
+  return finalOutput;
+  }
 
       /* --- Add message --- */
       let lastBotTxt = '';
