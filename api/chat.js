@@ -106,7 +106,25 @@ function filterHost(urls, host) {
   }
   return out;
 }
+function isHomeUrl(url, siteBaseUrl) {
+  if (!url || !siteBaseUrl) return false;
+  try {
+    const u = new URL(url);
+    const s = new URL(siteBaseUrl);
 
+    const uh = u.hostname.replace(/^www\./, '');
+    const sh = s.hostname.replace(/^www\./, '');
+    if (uh !== sh) return false;
+
+    const up = u.pathname.replace(/\/+$/, '');
+    const sp = s.pathname.replace(/\/+$/, '');
+
+    // "" eller "/" = ren startsida
+    return up === '' || up === '/' || up === sp;
+  } catch {
+    return false;
+  }
+}
 /* ========== LLMS-hämtning & cache (per tenant) ========== */
 /**
  * mode:
@@ -349,7 +367,7 @@ const ACTION_INTENT_PATTERNS = [
   /\bkan du hjälpa\b/i,
 
   // Analys / granskning
-  /\banalys(er)?\b/i,
+  /\b(?<!pris)analys(er)?\b/i,
   /\bgranskning\b/i,
   /\baudit\b/i,
   /\bgenomgång\b/i,
@@ -487,6 +505,37 @@ export default async function handler(req, res) {
     const llmsConfig    = siteConfig?.llms    || {};
     const linksConfig   = siteConfig?.links   || {};
 
+    // 🔹 Viktiga sidor från config (sv + generiska alias)
+    const primaryPages = {
+    services:
+      (typeof linksConfig.services === 'string' && linksConfig.services) ||
+      pages.services ||
+      pages.tjanster ||
+      null,
+    pricing:
+      (typeof linksConfig.pricing === 'string' && linksConfig.pricing) ||
+      pages.pricing ||
+      pages.priser ||
+      null,
+    blog:
+      (typeof linksConfig.blog === 'string' && linksConfig.blog) ||
+      (typeof linksConfig.news === 'string' && linksConfig.news) ||
+      pages.blog ||
+      pages.blogg ||
+      null,
+    contact:
+      (typeof linksConfig.contact === 'string' && linksConfig.contact) ||
+      pages.contact ||
+      pages.kontakt ||
+      null,
+    };
+
+    let sitePagesPrompt = '';
+    if (primaryPages.services) sitePagesPrompt += `- Tjänstesida: ${primaryPages.services}\n`;
+    if (primaryPages.pricing)  sitePagesPrompt += `- Prissida: ${primaryPages.pricing}\n`;
+    if (primaryPages.blog)     sitePagesPrompt += `- Artiklar / blogg: ${primaryPages.blog}\n`;
+    if (primaryPages.contact)  sitePagesPrompt += `- Kontakt / boka: ${primaryPages.contact}\n`;
+
     // Ladda sitemap & inlägg & LLMS (per site)
     const [sitemapUrls, postUrls, llms] = await Promise.all([
       loadSitemapUrls(siteId, siteBaseUrl, sitemapConfig, siteHost),
@@ -516,6 +565,21 @@ Mål:
 3) När användaren uttrycker intresse (t.ex. pris, offert, boka, rådgivning, analys): föreslå att ta kontakt eller boka ett möte på ett naturligt sätt.
 4) Håll tonen professionell, vänlig och framåtblickande – på svenska.
 
+Webbplatsens viktiga sidor (använd dessa i första hand när du länkar):
+${sitePagesPrompt || '- Ingen specifik sidkarta angiven, använd den mest relevanta sidan du hittar i LLMS / sitemap.'}
+
+Specifika regler för länkar:
+- Vid frågor om priser, kostnader, offerter m.m.:
+  • Om det finns en prissida: länka i första hand till prissidan (${primaryPages.pricing || 'om en sådan finns'}).
+  • Du får gärna komplettera med uppmaning att kontakta företaget för mer detaljerade prisförslag.
+- Vid frågor om vad företaget erbjuder:
+  • Länka i första hand till tjänstesidan (${primaryPages.services || 'om en sådan finns'}).
+- Vid frågor om kontakt, bokning, rådgivning:
+  • Länka i första hand till kontaktsidan (${primaryPages.contact || 'om en sådan finns'}).
+- Vid frågor där användaren vill fördjupa sig eller få tips/guider:
+  • Länka i första hand till blogg- eller artikelsidan (${primaryPages.blog || 'om en sådan finns'}).
+- Undvik att använda enbart startsidan (${siteBaseUrl}) som enda "Läs mer"-länk om det finns en mer specifik sida (t.ex. tjänster, priser, blogg eller kontakt).
+
 Begränsningar:
 - Fokusera på sådant som är relevant för företagets verksamhet och webbplats.
 - Påstå inte att du “har träningsdata”; beskriv istället att du baserar svar på webbplatsens innehåll och generell branschkunskap.
@@ -524,7 +588,7 @@ Begränsningar:
 Svarsstruktur (när det passar):
 - Kort kärnförklaring (2–5 meningar).
 - Punktlista med 2–4 konkreta råd eller steg.
-- “Läs mer”: 1–2 relevanta länkar till webbplatsen.
+- “Läs mer”: 1–2 relevanta länkar till webbplatsen enligt reglerna ovan.
 - Avsluta med en mjuk CTA om läget är rätt (t.ex. boka möte, kontakta oss eller få en snabb genomgång).
 
 Primär kunskapsbas:
@@ -645,11 +709,21 @@ ${llmsContext}
           if (score > 0) scored.push({ url: p, score });
         } catch {}
       }
-      scored.sort((a,b)=> b.score - a.score);
+      // Prioritera bloggposter före pages
+      scored.sort((a, b) => {
+        const aIsPost = /\/\d{4}\/\d{2}\//.test(a.url) || /post/.test(a.url);
+        const bIsPost = /\/\d{4}\/\d{2}\//.test(b.url) || /post/.test(b.url);
+
+        if (aIsPost && !bIsPost) return -1;
+        if (!aIsPost && bIsPost) return 1;
+
+        return b.score - a.score;
+      });
 
       const suggestions = [];
       for (const s of scored) {
         if (suggestions.length >= 2) break;
+        if (isHomeUrl(s.url, siteBaseUrl)) continue;
         if (!reply.includes(s.url)) suggestions.push(s);
       }
       if (suggestions.length) {
@@ -725,6 +799,41 @@ ${llmsContext}
       lead_key = null;
     }
 
+    // 🔹 Undvik att hemsidan används som primär "Läs mer"-länk
+if (siteBaseUrl && siteHost) {
+  const baseNoSlash = siteBaseUrl.replace(/\/$/, '');
+  const homeVariants = [baseNoSlash, baseNoSlash + '/'];
+
+  // Välj en bättre fallback-sida om möjligt
+  const preferredFallback =
+    primaryPages.services ||
+    primaryPages.pricing ||
+    primaryPages.contact ||
+    primaryPages.blog ||
+    null;
+
+  for (const v of homeVariants) {
+    const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    if (preferredFallback) {
+      // Byt ut [Label](hemsida) → [Label]( bättre sida )
+      const mdRe = new RegExp(`\$begin:math:display$\(\[\^\\$end:math:display$]+)\\]\\(${esc}\\)`, 'g');
+      reply = reply.replace(mdRe, `[$1](${preferredFallback})`);
+
+      // Rå URL: hemsida → bättre sida
+      const rawRe = new RegExp(esc, 'g');
+      reply = reply.replace(rawRe, preferredFallback);
+    } else {
+      // Om vi inte har något bättre: ta bort länken men behåll texten
+      const mdRe = new RegExp(`\$begin:math:display$\(\[\^\\$end:math:display$]+)\\]\$begin:math:text$\$\{esc\}\\$end:math:text$`, 'g');
+      reply = reply.replace(mdRe, '$1');
+
+      const rawRe = new RegExp(esc, 'g');
+      reply = reply.replace(rawRe, '');
+    }
+  }
+}
+
     // Sista safety: ta bort kvarvarande orphan-hakparenteser
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, '$1');
 
@@ -760,6 +869,15 @@ ${llmsContext}
       (pages.privacy_policy && typeof pages.privacy_policy === 'string' && pages.privacy_policy) ||
       (pages.integritet && typeof pages.integritet === 'string' && pages.integritet) ||
       `${siteBaseUrl}/integritetspolicy/`;
+
+    // Pris-intent: om vi har en prissida men svaret saknar länken, lägg till den
+    const priceQuestion =
+      /\bpris(er|lista|sida)?\b/i.test(lower) ||
+      /\bpricing\b/i.test(lower);
+
+    if (priceQuestion && pricingUrl && !reply.includes(pricingUrl)) {
+      reply += `\n\n💰 Du hittar våra aktuella priser här: [Priser](${pricingUrl}).`;
+    }
 
     return res.status(200).json({
       reply,

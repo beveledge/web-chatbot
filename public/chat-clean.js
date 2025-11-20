@@ -466,22 +466,10 @@
           });
         })();
 
-        // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
-        s = s.replace(
-          /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*(?:\r?\n)?\s*\2/g,
-          '[$1]($2)'
-        );
+        // ❌ 0c är borttagen – vi skapar inte längre länkar automatiskt av ord + URL
 
-        // 2) Markdown-länkar [text](url) → HTML-länkar
+        // 1) Markdown-länkar [text](url) → HTML-länkar
         s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
-
-        // 2b) Råa URL:er → klickbara generiska länkar (för alla kunder)
-        s = s.replace(/https?:\/\/[^\s)]+/g, (url, offset, full) => {
-          const prev = offset > 0 ? full[offset - 1] : '';
-          // Om den redan ligger i href-attribut eller efter '(' i en länk – låt bli
-          if (prev === '"' || prev === "'" || prev === '(') return url;
-          return `<a href="${url}">${url}</a>`;
-        });
 
         // Fetstil + kursiv
         s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -504,7 +492,8 @@
           }
         };
 
-        const BREAKS_LIST = /^(?:💡\s*)?Tips\b|(?:📰\s*)?Relaterad\s+läsning\b|Källa:/i;
+        // 🔧 UPPDATERAD: "Läs mer" bryter också listor, så numreringen inte startar om konstigt
+        const BREAKS_LIST = /^(?:💡\s*)?Tips\b|(?:📰\s*)?Relaterad\s+läsning\b|Källa:|Läs mer\b/i;
 
         for (const raw of lines) {
           const line = raw.trim();
@@ -520,6 +509,7 @@
           const mUL = /^[-*•]\s+(.+)$/.exec(line);
           const mOL = /^\d+\.\s+(.+)$/.exec(line);
 
+          // Bryt listor på "Tips", "Relaterad läsning", "Källa:" OCH "Läs mer"
           if ((inUL || inOL) && BREAKS_LIST.test(line)) {
             flushLists();
             flushPara();
@@ -529,13 +519,13 @@
 
           if (mUL) {
             flushPara();
-            if (!inUL) {
-              flushLists();
-              inUL = true;
-              out.push('<ul>');
-            }
-            out.push('<li>' + mUL[1] + '</li>');
-            continue;
+              if (!inUL) {
+                flushLists();
+                inUL = true;
+                out.push('<ul>');
+              }
+              out.push('<li>' + mUL[1] + '</li>');
+              continue;
           }
 
           if (mOL) {
