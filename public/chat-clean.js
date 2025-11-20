@@ -448,16 +448,17 @@ function renderMarkdown(txt) {
     .replace(/\u00A0/g, ' ')
     .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
 
-  // 0a) "SEOhttps://..." → "SEO https://..."
+  // 0a) Lösa "SEOhttps://..." osv (text fastklistrad mot URL)
   s = s.replace(/([A-Za-zÅÄÖåäö])https?:\/\//g, '$1 https://');
 
-  // 0b) Ta bort råa URL:er direkt efter markdown-länkar
+  // 0b) Fånga alla Markdown-länkar och ta bort råa URL:er direkt efter
   (function () {
     const mdUrls = new Set();
-    s.replace(/\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/gi, (_m, url) => {
+    s.replace(/\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/gi, function (_m, url) {
       mdUrls.add(url);
       return _m;
     });
+
     mdUrls.forEach((url) => {
       const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const re = new RegExp(`\\)\\s*${esc}`, 'g');
@@ -465,25 +466,22 @@ function renderMarkdown(txt) {
     });
   })();
 
-  // ✅ 0c) Radvis "Label https://..." → "[Label](https://...)"
-  s = s.replace(
-    /^(\s*[-*•]?\s*)([^\n]*?[^\s])\s+(https?:\/\/[^\s)]+)\s*$/gm,
-    (_m, prefix, label, url) => {
-      if (/\[.+\]\(https?:\/\//i.test(label)) return _m;
-      return `${prefix}[${label}](${url})`;
-    }
-  );
+  // ❌ 0c (Label + URL → länk) – borttagen med flit, gav felaktiga länkar
 
-  // 1) "[Label](url) url" → "[Label](url)"
+  // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
   s = s.replace(
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*(?:\r?\n)?\s*\2/g,
     '[$1]($2)'
   );
 
-  // 2) Markdown-länkar → HTML-länkar
+  // 2) Markdown-länkar [text](url) → HTML-länkar
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
 
-  // 3) Fetstil / kursiv
+  // 3) Råa URL:er → HTML-länkar (om de står som eget ord)
+  //    (träffar inte i href-attribut, eftersom tecknet före inte är mellanslag/början)
+  s = s.replace(/(^|\s)(https?:\/\/[^\s)]+)/g, '$1<a href="$2">$2</a>');
+
+  // Fetstil + kursiv
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
@@ -504,13 +502,16 @@ function renderMarkdown(txt) {
     }
   };
 
-  // ✴ Ny: inkludera "Läs mer" som list-breaker
+  // 👉 Här lade vi tidigare till "Läs mer" som brytpunkt – behåll det
   const BREAKS_LIST = /^(?:💡\s*)?Tips\b|(?:📰\s*)?Relaterad\s+läsning\b|Källa:|Läs mer\b/i;
 
   for (const raw of lines) {
     const line = raw.trim();
+
     if (!line) {
-      if (inUL || inOL) continue;
+      if (inUL || inOL) {
+        continue;
+      }
       flushPara();
       continue;
     }
@@ -527,14 +528,22 @@ function renderMarkdown(txt) {
 
     if (mUL) {
       flushPara();
-      if (!inUL) { flushLists(); inUL = true; out.push('<ul>'); }
+      if (!inUL) {
+        flushLists();
+        inUL = true;
+        out.push('<ul>');
+      }
       out.push('<li>' + mUL[1] + '</li>');
       continue;
     }
 
     if (mOL) {
       flushPara();
-      if (!inOL) { flushLists(); inOL = true; out.push('<ol>'); }
+      if (!inOL) {
+        flushLists();
+        inOL = true;
+        out.push('<ol>');
+      }
       out.push('<li>' + mOL[1] + '</li>');
       continue;
     }
@@ -545,8 +554,7 @@ function renderMarkdown(txt) {
   flushPara();
   flushLists();
 
-  // 4) Kompaktare spacing mellan block
-  return out.join('\n').replace(/<\/p>\s*<p>/g, '</p><p>');
+  return out.join('\n');
 }
 
       /* --- Add message --- */
