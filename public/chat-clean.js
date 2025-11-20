@@ -444,7 +444,7 @@ function renderMarkdown(txt) {
 
   // Normalisering
   s = s
-    .replace(/\r\n/g, '\n')s
+    .replace(/\r\n/g, '\n')
     .replace(/\u00A0/g, ' ')
     .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
 
