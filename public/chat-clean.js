@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.3.2 (multitenant: siteId skickas till backend) */
+/* Webbyrå Sigtuna Chat – Frontend v1.3.3 (multitenant: siteId skickas till backend) */
 (function () {
   'use strict';
 
@@ -227,9 +227,15 @@
 .wbs-bubble div{white-space:pre-wrap;word-wrap:break-word}
 .wbs-bubble.bot div{font-size:13px;line-height:1.45}
 .wbs-bubble.user div{font-size:14px;line-height:1.45}
-.wbs-bubble ul,.wbs-bubble ol{margin:6px 0 6px 20px;padding:0}
+
+/* Tighter spacing i bubblor och listor */
+.wbs-bubble ul,
+.wbs-bubble ol{
+  margin:4px 0 4px 18px;
+  padding:0;
+}
 .wbs-bubble li{margin:2px 0;line-height:1.45}
-.wbs-bubble p{margin:6px 0;line-height:1.55}
+.wbs-bubble p{margin:4px 0;line-height:1.5}
 .wbs-bubble ul li p{margin:0}
 .wbs-bubble a{color:var(--brandFg);text-decoration:underline;word-break:break-word}
 
@@ -240,17 +246,30 @@
   padding:8px 10px 10px 10px;
   align-items:flex-end
 }
+
 .wbs-chip{
   display:inline-flex;
   width:auto;
   background:#fff;
   border:1px solid #e5e7eb;
   border-radius:999px;
-  padding:10px 12px;
+  padding:8px 12px;
   font-size:13px;
-  cursor:pointer
+  cursor:pointer;
+  transition:background .15s ease,border-color .15s ease,color .15s ease;
 }
 .wbs-chip:hover{background:rgba(0,0,0,.03)}
+
+/* CTA / lead magnets – tydligt skild från vanliga chips */
+.wbs-chip-cta{
+  background:var(--brandBg);
+  color:#fff;
+  border-color:var(--brandBg);
+}
+.wbs-chip-cta:hover{
+  background:var(--brandFg);
+  border-color:var(--brandFg);
+}
 
 .wbs-inputrow{
   display:flex;
@@ -370,11 +389,11 @@
       panel.append(header, log, chips, inpRow, powered, foot);
       root.appendChild(panel);
 
-      /* --- CTA helper --- */
+      /* --- CTA helper (lead magnets / bokning) --- */
       function addCTAChip(label, url) {
         chips.innerHTML = '';
         const chip = document.createElement('button');
-        chip.className = 'wbs-chip wbs-chip-anim';
+        chip.className = 'wbs-chip wbs-chip-cta wbs-chip-anim';
         chip.textContent = label;
         chip.onclick = () => {
           window.gtag?.('event', 'wbs_chat_cta', { cta: label });
@@ -409,7 +428,7 @@
         chatMemory = [];
       }
 
-      /* --- Chips --- */
+      /* --- Chips (vanliga, neutrala) --- */
       SUGGESTIONS.forEach((q, i) => {
         const chip = c('button', 'wbs-chip wbs-chip-anim', q);
         chip.style.animationDelay = (i * CHIP_STAGGER_MS) + 'ms';
@@ -447,20 +466,22 @@
           });
         })();
 
-        // 0c) "Label URL" → gör etiketten till länk, göm rå URL
-        s = s.replace(
-          /(\b(?:SEO|Lokal SEO|Sökmotoroptimering|WordPress(?:-underhåll)?|Webbdesign|Tjänster|Priser|Webbanalys|Digital(?:a)?\s+marknadsföring)\b)\s+(https?:\/\/[^\s)]+)/gi,
-          (_m, label, url) => `[${label}](${url})`
-        );
-
         // 1) "[Label](url) url" (samma rad eller nästa rad) → "[Label](url)"
         s = s.replace(
           /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*(?:\r?\n)?\s*\2/g,
           '[$1]($2)'
         );
 
-        // 3) Markdown-länkar [text](url) → HTML-länkar
+        // 2) Markdown-länkar [text](url) → HTML-länkar
         s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+
+        // 2b) Råa URL:er → klickbara generiska länkar (för alla kunder)
+        s = s.replace(/https?:\/\/[^\s)]+/g, (url, offset, full) => {
+          const prev = offset > 0 ? full[offset - 1] : '';
+          // Om den redan ligger i href-attribut eller efter '(' i en länk – låt bli
+          if (prev === '"' || prev === "'" || prev === '(') return url;
+          return `<a href="${url}">${url}</a>`;
+        });
 
         // Fetstil + kursiv
         s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -580,7 +601,7 @@
         }
       }
 
-      /* --- Restore or greet --- */
+      /* --- Restore eller första hälsning --- */
       if (chatMemory.length > 0) {
         replaying = true;
         chatMemory.forEach(({ who, txt }) => addMsg(who, txt, false));
@@ -628,7 +649,7 @@
         if (first && REPLACE_CHIPS_WITH_CTA) {
           first = false;
           chips.innerHTML = '';
-          const cta = c('button', 'wbs-chip wbs-chip-anim', CTA_TEXT);
+          const cta = c('button', 'wbs-chip wbs-chip-cta wbs-chip-anim', CTA_TEXT);
           cta.onclick = () => window.open(BOOKING_URL, '_blank');
           chips.append(cta);
         }
@@ -642,8 +663,8 @@
         log.scrollTop = log.scrollHeight;
 
         try {
-          const payload = { message: m, sessionId };   // 👈 siteId-payload
-          if (SITE_ID) payload.siteId = SITE_ID;       // 👈 lägg till siteId om det finns
+          const payload = { message: m, sessionId };
+          if (SITE_ID) payload.siteId = SITE_ID;
 
           const r = await fetch(ENDPOINT, {
             method: 'POST',
@@ -654,7 +675,7 @@
           t.remove();
           addMsg('Bot', data.reply || '(Inget svar)');
 
-          // Lead-intent: visa första (eller specifik) lead magnet om någon är definierad
+          // Lead-intent: visa lead magnet om någon är definierad
           if (data.lead_intent && leadMagnets.length) {
             let chosen = null;
 
@@ -700,7 +721,7 @@
       clear.onclick = () => {
         const oldKey = SAVED_LOG_KEY;
 
-        const clearPayload = { sessionId };   // 👈 siteId även till /clear
+        const clearPayload = { sessionId };
         if (SITE_ID) clearPayload.siteId = SITE_ID;
 
         fetch('https://web-chatbot-beta.vercel.app/api/clear', {
