@@ -1,4 +1,4 @@
-/* Webbyrå Sigtuna Chat – Frontend v1.3.3 (multitenant: siteId skickas till backend) */
+/* Webbyrå Sigtuna Chat – Frontend v1.3.4 (multitenant: siteId skickas till backend) */
 (function () {
   'use strict';
 
