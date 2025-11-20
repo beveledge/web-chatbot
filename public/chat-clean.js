@@ -437,125 +437,117 @@
       });
 
       /* === Enkelt Markdown/HTML-rendering (generisk, ej domänbunden) === */
-      function renderMarkdown(txt) {
-        if (!txt) return '';
+function renderMarkdown(txt) {
+  if (!txt) return '';
 
-        let s = String(txt);
+  let s = String(txt);
 
-        // Normalisering
-        s = s
-          .replace(/\r\n/g, '\n')
-          .replace(/\u00A0/g, ' ')
-          .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
+  // Normalisering
+  s = s
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u2010-\u2015\u2212\u00AD]/g, '-');
 
-        // 0a) Lösa "SEOhttps://..." osv (text fastklistrad mot URL)
-        s = s.replace(/([A-Za-zÅÄÖåäö])https?:\/\//g, '$1 https://');
+  // 0a) "SEOhttps://..." → "SEO https://..."
+  s = s.replace(/([A-Za-zÅÄÖåäö])https?:\/\//g, '$1 https://');
 
-        // 0b) Fånga alla Markdown-länkar och ta bort råa URL:er direkt efter
-        (function () {
-          const mdUrls = new Set();
-          s.replace(/\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/gi, function (_m, url) {
-            mdUrls.add(url);
-            return _m;
-          });
+  // 0b) Ta bort råa URL:er direkt efter markdown-länkar
+  (function () {
+    const mdUrls = new Set();
+    s.replace(/\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/gi, (_m, url) => {
+      mdUrls.add(url);
+      return _m;
+    });
+    mdUrls.forEach((url) => {
+      const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`\\)\\s*${esc}`, 'g');
+      s = s.replace(re, ')');
+    });
+  })();
 
-          mdUrls.forEach((url) => {
-            const esc = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(`\\)\\s*${esc}`, 'g');
-            s = s.replace(re, ')');
-          });
-        })();
+  // ✅ 0c) Radvis "Label https://..." → "[Label](https://...)"
+  s = s.replace(
+    /^(\s*[-*•]?\s*)([^\n]*?[^\s])\s+(https?:\/\/[^\s)]+)\s*$/gm,
+    (_m, prefix, label, url) => {
+      if (/\[.+\]\(https?:\/\//i.test(label)) return _m;
+      return `${prefix}[${label}](${url})`;
+    }
+  );
 
-        // 0c) Radvis: "Text https://..." → "- [Text](https://...)"
-        // Gäller både vanliga rader och punkter (- • *)
-        s = s.replace(
-          /^(\s*[-*•]?\s*)([^\n]*?[^\s])\s+(https?:\/\/[^\s)]+)\s*$/gm,
-          (_m, prefix, label, url) => {
-            // Om label redan innehåller en länk, rör den inte
-            if (/\[.+\]\(https?:\/\//i.test(label)) return _m;
-            return `${prefix}[${label}](${url})`;
-        }
-      );
+  // 1) "[Label](url) url" → "[Label](url)"
+  s = s.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*(?:\r?\n)?\s*\2/g,
+    '[$1]($2)'
+  );
 
-        // 1) Markdown-länkar [text](url) → HTML-länkar
-        s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+  // 2) Markdown-länkar → HTML-länkar
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
 
-        // Fetstil + kursiv
-        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-        s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  // 3) Fetstil / kursiv
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
-        const lines = s.split('\n');
-        const out = [];
-        let inUL = false;
-        let inOL = false;
-        let para = [];
+  const lines = s.split('\n');
+  const out = [];
+  let inUL = false;
+  let inOL = false;
+  let para = [];
 
-        const flushLists = () => {
-          if (inUL) { out.push('</ul>'); inUL = false; }
-          if (inOL) { out.push('</ol>'); inOL = false; }
-        };
-        const flushPara = () => {
-          if (para.length) {
-            out.push('<p>' + para.join('<br>') + '</p>');
-            para = [];
-          }
-        };
+  const flushLists = () => {
+    if (inUL) { out.push('</ul>'); inUL = false; }
+    if (inOL) { out.push('</ol>'); inOL = false; }
+  };
+  const flushPara = () => {
+    if (para.length) {
+      out.push('<p>' + para.join('<br>') + '</p>');
+      para = [];
+    }
+  };
 
-        // 🔧 UPPDATERAD: "Läs mer" bryter också listor, så numreringen inte startar om konstigt
-        const BREAKS_LIST = /^(?:💡\s*)?Tips\b|(?:📰\s*)?Relaterad\s+läsning\b|Källa:|Läs mer\b/i;
+  // ✴ Ny: inkludera "Läs mer" som list-breaker
+  const BREAKS_LIST = /^(?:💡\s*)?Tips\b|(?:📰\s*)?Relaterad\s+läsning\b|Källa:|Läs mer\b/i;
 
-        for (const raw of lines) {
-          const line = raw.trim();
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      if (inUL || inOL) continue;
+      flushPara();
+      continue;
+    }
 
-          if (!line) {
-            if (inUL || inOL) {
-              continue;
-            }
-            flushPara();
-            continue;
-          }
+    const mUL = /^[-*•]\s+(.+)$/.exec(line);
+    const mOL = /^\d+\.\s+(.+)$/.exec(line);
 
-          const mUL = /^[-*•]\s+(.+)$/.exec(line);
-          const mOL = /^\d+\.\s+(.+)$/.exec(line);
+    if ((inUL || inOL) && BREAKS_LIST.test(line)) {
+      flushLists();
+      flushPara();
+      out.push('<p><strong>' + line + '</strong></p>');
+      continue;
+    }
 
-          // Bryt listor på "Tips", "Relaterad läsning", "Källa:" OCH "Läs mer"
-          if ((inUL || inOL) && BREAKS_LIST.test(line)) {
-            flushLists();
-            flushPara();
-            out.push('<p><strong>' + line + '</strong></p>');
-            continue;
-          }
+    if (mUL) {
+      flushPara();
+      if (!inUL) { flushLists(); inUL = true; out.push('<ul>'); }
+      out.push('<li>' + mUL[1] + '</li>');
+      continue;
+    }
 
-          if (mUL) {
-            flushPara();
-              if (!inUL) {
-                flushLists();
-                inUL = true;
-                out.push('<ul>');
-              }
-              out.push('<li>' + mUL[1] + '</li>');
-              continue;
-          }
+    if (mOL) {
+      flushPara();
+      if (!inOL) { flushLists(); inOL = true; out.push('<ol>'); }
+      out.push('<li>' + mOL[1] + '</li>');
+      continue;
+    }
 
-          if (mOL) {
-            flushPara();
-            if (!inOL) {
-              flushLists();
-              inOL = true;
-              out.push('<ol>');
-            }
-            out.push('<li>' + mOL[1] + '</li>');
-            continue;
-          }
+    para.push(line);
+  }
 
-          para.push(line);
-        }
+  flushPara();
+  flushLists();
 
-        flushPara();
-        flushLists();
-
-        return out.join('\n');
-      }
+  // 4) Kompaktare spacing mellan block
+  return out.join('\n').replace(/<\/p>\s*<p>/g, '</p><p>');
+}
 
       /* --- Add message --- */
       let lastBotTxt = '';
