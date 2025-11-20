@@ -1,4 +1,4 @@
-/* Multi-tenant Chat Backend v6.2.0 (generic, WP-config-driven) */
+/* Multi-tenant Chat Backend v6.2.1 (generic, WP-config-driven) */
 import { kv } from '@vercel/kv';
 import OpenAI from 'openai';
 
@@ -106,6 +106,7 @@ function filterHost(urls, host) {
   }
   return out;
 }
+
 function isHomeUrl(url, siteBaseUrl) {
   if (!url || !siteBaseUrl) return false;
   try {
@@ -125,6 +126,7 @@ function isHomeUrl(url, siteBaseUrl) {
     return false;
   }
 }
+
 /* ========== LLMS-hämtning & cache (per tenant) ========== */
 /**
  * mode:
@@ -149,7 +151,6 @@ async function loadKVOrFetch(key, url, ttlSeconds, mode = 'text') {
       if (json && typeof json === 'object' && typeof json.content === 'string') {
         value = json.content;
       } else if (typeof json === 'string') {
-        // i händelse av framtida ändring där endpointen returnerar ren text i JSON
         value = json;
       }
     } else {
@@ -233,13 +234,6 @@ async function loadSiteConfig(siteId, baseUrl) {
 }
 
 /* ========== Sitemap-laddning (per tenant) ========== */
-/**
- * sitemapConfig (från siteConfig.sitemap) kan t.ex vara:
- * {
- *   index: "https://.../sitemap_index.xml",
- *   fallbacks: ["https://.../post-sitemap.xml", "https://.../page-sitemap.xml"]
- * }
- */
 async function loadSitemapUrls(siteId, baseUrl, sitemapConfig = {}, siteHost) {
   const cacheKey = kvKey(siteId, 'sitemap:urls');
   try {
@@ -505,30 +499,40 @@ export default async function handler(req, res) {
     const llmsConfig    = siteConfig?.llms    || {};
     const linksConfig   = siteConfig?.links   || {};
 
+    // Hjälpare för att välja första icke-tomma URLen
+    function pickUrl(...candidates) {
+      for (const c of candidates) {
+        if (typeof c === 'string' && c.trim()) return c.trim();
+      }
+      return null;
+    }
+
     // 🔹 Viktiga sidor från config (sv + generiska alias)
     const primaryPages = {
-    services:
-      (typeof linksConfig.services === 'string' && linksConfig.services) ||
-      pages.services ||
-      pages.tjanster ||
-      null,
-    pricing:
-      (typeof linksConfig.pricing === 'string' && linksConfig.pricing) ||
-      pages.pricing ||
-      pages.priser ||
-      null,
-    blog:
-      (typeof linksConfig.blog === 'string' && linksConfig.blog) ||
-      (typeof linksConfig.news === 'string' && linksConfig.news) ||
-      pages.blog ||
-      pages.blogg ||
-      null,
-    contact:
-      (typeof linksConfig.contact === 'string' && linksConfig.contact) ||
-      pages.contact ||
-      pages.kontakt ||
-      null,
+      services: pickUrl(
+        linksConfig?.services,
+        pages.services,
+        pages.tjanster
+      ),
+      pricing: pickUrl(
+        linksConfig?.pricing,
+        pages.pricing,
+        pages.priser
+      ),
+      blog: pickUrl(
+        linksConfig?.blog,
+        linksConfig?.news,
+        pages.blog,
+        pages.blogg
+      ),
+      contact: pickUrl(
+        linksConfig?.contact,
+        pages.contact,
+        pages.kontakt
+      ),
     };
+
+    const pricingUrl = primaryPages.pricing; // behövs längre ned
 
     let sitePagesPrompt = '';
     if (primaryPages.services) sitePagesPrompt += `- Tjänstesida: ${primaryPages.services}\n`;
@@ -724,8 +728,8 @@ ${llmsContext}
       }
       // Prioritera bloggposter före pages
       scored.sort((a, b) => {
-        const aIsPost = /\/\d{4}\/\d{2}\//.test(a.url) || /post/.test(a.url);
-        const bIsPost = /\/\d{4}\/\d{2}\//.test(b.url) || /post/.test(b.url);
+        const aIsPost = isBlogPostUrl(a.url);
+        const bIsPost = isBlogPostUrl(b.url);
 
         if (aIsPost && !bIsPost) return -1;
         if (!aIsPost && bIsPost) return 1;
