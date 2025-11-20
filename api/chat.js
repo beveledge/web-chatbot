@@ -695,6 +695,19 @@ ${llmsContext}
     const lower = message.toLowerCase();
     const infoTriggered = infoTriggers.test(lower);
 
+    function isBlogPostUrl(url) {
+      try {
+        const path = new URL(url).pathname;
+        // Anpassat till din struktur: /blogg/slug/
+        if (/\/(blogg|blog|artiklar)\//i.test(path)) return true;
+        // Klassisk WP med datum i URL
+        if (/\/\d{4}\/\d{2}\//.test(path)) return true;
+        return false;
+      } catch {
+        return false;
+      }
+    }
+
     if (infoTriggered && postUrls && postUrls.length) {
       const qTokens = tokenizeSv(lower);
       const scored = [];
@@ -733,14 +746,9 @@ ${llmsContext}
           reply += `- [${nice}](${s.url})\n`;
         }
       } else {
-        const blogUrl =
-          (typeof linksConfig.blog === 'string' && linksConfig.blog) ||
-          (typeof linksConfig.news === 'string' && linksConfig.news) ||
-          (typeof pages.blog === 'string' && pages.blog) ||
-          (typeof pages.blogg === 'string' && pages.blogg) ||
-          null;
-        if (blogUrl && !reply.includes(blogUrl)) {
-          reply += `\n\n💡 Vill du läsa fler artiklar och guider? Kolla gärna vår [artikelsida](${blogUrl}).`;
+        const blogFallback = primaryPages.blog;
+        if (blogFallback && !reply.includes(blogFallback)) {
+          reply += `\n\n💡 Vill du läsa fler artiklar och guider? Kolla gärna vår [artikelsida](${blogFallback}).`;
         }
       }
     }
@@ -798,41 +806,6 @@ ${llmsContext}
       lead_intent = false;
       lead_key = null;
     }
-
-    // 🔹 Undvik att hemsidan används som primär "Läs mer"-länk
-if (siteBaseUrl && siteHost) {
-  const baseNoSlash = siteBaseUrl.replace(/\/$/, '');
-  const homeVariants = [baseNoSlash, baseNoSlash + '/'];
-
-  // Välj en bättre fallback-sida om möjligt
-  const preferredFallback =
-    primaryPages.services ||
-    primaryPages.pricing ||
-    primaryPages.contact ||
-    primaryPages.blog ||
-    null;
-
-  for (const v of homeVariants) {
-    const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-    if (preferredFallback) {
-      // Byt ut [Label](hemsida) → [Label]( bättre sida )
-      const mdRe = new RegExp(`\$begin:math:display$\(\[\^\\$end:math:display$]+)\\]\\(${esc}\\)`, 'g');
-      reply = reply.replace(mdRe, `[$1](${preferredFallback})`);
-
-      // Rå URL: hemsida → bättre sida
-      const rawRe = new RegExp(esc, 'g');
-      reply = reply.replace(rawRe, preferredFallback);
-    } else {
-      // Om vi inte har något bättre: ta bort länken men behåll texten
-      const mdRe = new RegExp(`\$begin:math:display$\(\[\^\\$end:math:display$]+)\\]\$begin:math:text$\$\{esc\}\\$end:math:text$`, 'g');
-      reply = reply.replace(mdRe, '$1');
-
-      const rawRe = new RegExp(esc, 'g');
-      reply = reply.replace(rawRe, '');
-    }
-  }
-}
 
     // Sista safety: ta bort kvarvarande orphan-hakparenteser
     reply = reply.replace(/\[([^\]]+)\](?!\()/g, '$1');

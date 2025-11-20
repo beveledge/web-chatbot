@@ -466,7 +466,16 @@
           });
         })();
 
-        // ❌ 0c är borttagen – vi skapar inte längre länkar automatiskt av ord + URL
+        // 0c) Radvis: "Text https://..." → "- [Text](https://...)"
+        // Gäller både vanliga rader och punkter (- • *)
+        s = s.replace(
+          /^(\s*[-*•]?\s*)([^\n]*?[^\s])\s+(https?:\/\/[^\s)]+)\s*$/gm,
+          (_m, prefix, label, url) => {
+            // Om label redan innehåller en länk, rör den inte
+            if (/\[.+\]\(https?:\/\//i.test(label)) return _m;
+            return `${prefix}[${label}](${url})`;
+        }
+      );
 
         // 1) Markdown-länkar [text](url) → HTML-länkar
         s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
