@@ -381,13 +381,19 @@ function buildProductSearchTokens(p) {
   }
 
   // Woo: tags som objekt { name, slug, ... }
-  if (Array.isArray(p.tags)) {
-    for (const t of p.tags) {
-      if (!t) continue;
+// Woo: tags som objekt { name, slug, ... } ELLER strängar
+if (Array.isArray(p.tags)) {
+  for (const t of p.tags) {
+    if (!t) continue;
+
+    if (typeof t === 'string') {
+      parts.push(t);                 // ← din struktur, t.ex. "Google recension"
+    } else {
       if (t.name) parts.push(String(t.name));
       if (t.slug) parts.push(String(t.slug));
     }
   }
+}
 
   // Attribut (storlek, färg, material, etc.)
   if (Array.isArray(p.attributes)) {
@@ -704,10 +710,19 @@ ${llms.svPart}
             .join(', ')})`
           : '';
 
-        const price =
-          (typeof p.price === 'number' || typeof p.price === 'string')
-            ? String(p.price)
-            : '';
+        let price = '';
+
+        // Vanligt Woo-fält om det skulle finnas
+        if (typeof p.price === 'number' || typeof p.price === 'string') {
+          price = String(p.price);
+        }
+        // Din egen struktur: price_from + currency (t.ex. 1295 + "SEK")
+        else if (typeof p.price_from === 'number' || typeof p.price_from === 'string') {
+          const c = typeof p.currency === 'string' ? p.currency : 'SEK';
+          price = `från ${p.price_from} ${c}`;
+        }
+
+        if (price)      productContext += ` – pris: ${price}`;
 
         const url = p.permalink || p.url || p.link || null;
 
@@ -984,8 +999,14 @@ if (product_intent) {
       if (typeof p.price_html === 'string' && p.price_html.trim()) {
         const priceText = p.price_html.replace(/<[^>]+>/g, '').trim();
         if (priceText) extras.push(priceText);
-      } else if (p.price !== null && p.price !== undefined) {
-        extras.push(String(p.price));
+      } else if (typeof p.price === 'string' && p.price.trim()) {
+        extras.push(p.price.trim());
+      } else if (
+        typeof p.price_from === 'number' ||
+        (typeof p.price_from === 'string' && p.price_from.trim())
+      ) {
+        const c = typeof p.currency === 'string' ? p.currency : 'SEK';
+        extras.push(`från ${p.price_from} ${c}`);
     }
 
       if (typeof p.short_description === 'string' && p.short_description.trim()) {
@@ -1127,7 +1148,8 @@ const product_hits = candidateProducts.map(p => ({
   id: p.id ?? null,
   name: p.name ?? null,
   url: p.permalink || p.url || p.link || null,
-  price: p.price ?? null,
+  price: p.price ?? p.price_from ?? null,
+  currency: p.currency ?? null,
 }));
 
 return res.status(200).json({
