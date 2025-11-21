@@ -902,9 +902,15 @@ ${productContext ? `\n${productContext}\n\nAnvänd ovanstående produkter när d
     // Rensa tomma parenteser
     reply = reply.replace(/\(\s*\)/g, '');
 
-    // Tighta avståndet mellan prisrad och "Läs mer här"-länk
-    reply = reply.replace(/\n\n(-\s*Pris:)/gi, '\n$1');
-    reply = reply.replace(/\n\n(-\s*Läs mer här)/gi, '\n$1');
+    // Tighta avståndet mellan prisrad och "Läs mer här"-länk (stöd både "-" och "•")
+    reply = reply.replace(/\n\n([•\-]\s*Pris:)/gi, '\n$1');
+    reply = reply.replace(/\n\n([•\-]\s*Läs mer här)/gi, '\n$1');
+
+    // Konvertera felaktiga "1."-produktrader (följda av Pris) till punktlista
+    reply = reply.replace(
+      /\n\s*1\. ([^\n]+)\n\n\s*([•\-]\s*Pris:)/gi,
+      '\n- $1\n\n$2'
+    );
 
     /* Informationsintention → relaterade inlägg eller blogg */
     const infoTriggers = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet|hur gör jag)/i;
