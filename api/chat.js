@@ -437,7 +437,7 @@ function rankProducts(query, products, maxResults = 3) {
 
   scored.sort((a, b) => b.score - a.score);
 
-  return scored.slice(0, maxResults).map(x => x.product);
+  return scored.slice(0, maxResults);
 }
 
 /* ========== Intent-spec: action/content + lead magnets ========== */
@@ -686,7 +686,8 @@ ${llms.svPart}
 `.trim();
 
     // 🔹 Produktkandidater baserat på användarens fråga (helt generiskt)
-    const candidateProducts = rankProducts(message, products, 4);
+    const candidateProducts = rankProducts(message, products, 4)
+      .map(x => x.product); // för prompten
 
     let productContext = '';
     if (candidateProducts.length) {
@@ -743,6 +744,14 @@ När du i sektionen [PRODUKTER – kandidatlista baserad på användarens fråga
 - Hitta aldrig på produktnamn, priser, funktioner, varianter eller egenskaper som inte finns i listan.
 - Länka alltid till produktens URL om en sådan finns.
 - Beskriv produkten kortfattat baserat på den information som finns, utan att anta detaljer som inte explicit framgår.
+
+Om du får en eller flera produkter i sektionen
+[PRODUKTER – kandidatlista baserad på användarens fråga]:
+
+- Rekommendera endast produkter från listan.
+- Använd produktens URL när du länkar.
+- Påhittade produktnamn eller priser är strikt förbjudna.
+- Om listan är tom, fråga efter förtydligande istället för att gissa.
 
 Agera som en neutral, hjälpsam rådgivare:
 - Hjälp användaren att förstå vilka alternativ som är relevanta för deras behov.
@@ -975,9 +984,9 @@ if (product_intent) {
       if (typeof p.price_html === 'string' && p.price_html.trim()) {
         const priceText = p.price_html.replace(/<[^>]+>/g, '').trim();
         if (priceText) extras.push(priceText);
-      } else if (typeof p.price === 'string' && p.price.trim()) {
-        extras.push(p.price.trim());
-      }
+      } else if (p.price !== null && p.price !== undefined) {
+        extras.push(String(p.price));
+    }
 
       if (typeof p.short_description === 'string' && p.short_description.trim()) {
         const desc = p.short_description.replace(/<[^>]+>/g, '').trim();
