@@ -766,7 +766,7 @@ Om du får en eller flera produkter i sektionen
 Agera som en neutral, hjälpsam rådgivare:
 - Hjälp användaren att förstå vilka alternativ som är relevanta för deras behov.
 - Ställ förtydligande frågor när användaren är otydlig, t.ex. om användningsområde, storlek, funktionalitet eller preferenser.
-- Om flera produkter passar: presentera 1–3 tydliga rekommendationer och förklara skillnaderna på ett enkelt och objektivt sätt.
+- Om flera produkter passar: presentera 1–3 tydliga rekommendationer och förklara skillnaderna på ett enkelt och objektivt sätt. När du listar flera produkter ska du använda punktlista (- Produktnamn) i stället för numrerad lista (1. Produktnamn).
 
 Undvik försäljning:
 - Pressa aldrig användaren att köpa.
@@ -902,14 +902,17 @@ ${productContext ? `\n${productContext}\n\nAnvänd ovanstående produkter när d
     // Rensa tomma parenteser
     reply = reply.replace(/\(\s*\)/g, '');
 
-    // Tighta avståndet mellan prisrad och "Läs mer här"-länk (stöd både "-" och "•")
-    reply = reply.replace(/\n\n([•\-]\s*Pris:)/gi, '\n$1');
-    reply = reply.replace(/\n\n([•\-]\s*Läs mer här)/gi, '\n$1');
+    // Normalisera radslut så \r\n inte sabbar våra regexar
+    reply = reply.replace(/\r\n/g, '\n');
 
-    // Konvertera felaktiga "1."-produktrader (följda av Pris) till punktlista
+    // Tighta avståndet mellan prisrad och "Läs mer här"-länk (stöd både "•" och "-")
+    reply = reply.replace(/\n{2,}([•\-]\s*Pris:)/gi, '\n$1');
+    reply = reply.replace(/\n{2,}([•\-]\s*Läs mer här)/gi, '\n$1');
+
+    // Konvertera "1. Produkt..." till punktlista om raden följs av en Pris-rad
     reply = reply.replace(
-      /\n\s*1\. ([^\n]+)\n\n\s*([•\-]\s*Pris:)/gi,
-      '\n- $1\n\n$2'
+      /(^|\n)\s*1\. ([^\n]+)\n{1,2}\s*([•\-]\s*Pris:)/gi,
+      '\n- $2\n\n$3'
     );
 
     /* Informationsintention → relaterade inlägg eller blogg */
