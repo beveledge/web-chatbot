@@ -68,6 +68,9 @@ const LLMS_TTL = 60 * 60 * 12; // 12h cache
 const LLMS_MAX_CHARS_PER_BLOCK = 2000; // ca 400–600 tokens
 const ADD_SOURCE_FOOTER = true;        // “Källa: …” när interna länkar finns
 
+/* ========== Product-cache (per tenant) ========== */
+const PRODUCTS_TTL = 60 * 60; // 1h cache
+
 /* ========== Sitemap-cache (per tenant) ========== */
 const SITEMAP_TTL = 60 * 60 * 24; // 24h
 
@@ -166,6 +169,30 @@ async function loadKVOrFetch(key, url, ttlSeconds, mode = 'text') {
     return value;
   } catch {
     return ''; // fail soft
+  }
+}
+
+/* ========== Product-hämtning & cache (per tenant) ========== */
+async function loadProducts(siteId, baseUrl) {
+  const cacheKey = kvKey(siteId, 'products');
+  try {
+    const cached = await kv.get(cacheKey);
+    if (Array.isArray(cached) && cached.length) return cached;
+  } catch {}
+
+  const base = baseUrl.replace(/\/$/, '');
+  const url = `${base}/wp-json/wbs-ai/v1/products`;
+
+  try {
+    const json = await fetchJson(url);
+    const products = Array.isArray(json?.products) ? json.products : [];
+    try {
+      await kv.set(cacheKey, products, { ex: PRODUCTS_TTL });
+    } catch {}
+    return products;
+  } catch (e) {
+    console.warn('[chat] loadProducts failed', e);
+    return [];
   }
 }
 
@@ -337,6 +364,82 @@ function prettyFromSlug(url) {
   }
 }
 
+function buildProductSearchTokens(p) {
+  const parts = [];
+
+  // Namn & slug
+  if (p.name) parts.push(String(p.name));
+  if (p.slug) parts.push(String(p.slug));
+
+  // Woo: kategorier som objekt { name, slug, ... }
+  if (Array.isArray(p.categories)) {
+    for (const c of p.categories) {
+      if (!c) continue;
+      if (c.name) parts.push(String(c.name));
+      if (c.slug) parts.push(String(c.slug));
+    }
+  }
+
+  // Woo: tags som objekt { name, slug, ... }
+  if (Array.isArray(p.tags)) {
+    for (const t of p.tags) {
+      if (!t) continue;
+      if (t.name) parts.push(String(t.name));
+      if (t.slug) parts.push(String(t.slug));
+    }
+  }
+
+  // Attribut (storlek, färg, material, etc.)
+  if (Array.isArray(p.attributes)) {
+    for (const a of p.attributes) {
+      if (!a) continue;
+      if (a.name) parts.push(String(a.name));
+
+      if (Array.isArray(a.options)) {
+        parts.push(...a.options.map(String));
+      } else if (a.value) {
+        parts.push(String(a.value));
+      }
+    }
+  }
+
+  // Beskrivningar
+  if (p.short_description) {
+    parts.push(String(p.short_description));
+  } else if (p.description) {
+    parts.push(String(p.description));
+  }
+
+  return tokenizeSv(parts.join(' '));
+}
+
+function rankProducts(query, products, maxResults = 3) {
+  if (!Array.isArray(products) || !products.length) return [];
+
+  const qTokens = tokenizeSv(query);
+  if (!qTokens.length) return [];
+
+  const scored = [];
+
+  for (const p of products) {
+    const pTokens = buildProductSearchTokens(p);
+    if (!pTokens.length) continue;
+
+    let score = 0;
+    for (const t of qTokens) {
+      if (pTokens.includes(t)) score += 1;
+    }
+
+    if (score > 0) {
+      scored.push({ product: p, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored.slice(0, maxResults).map(x => x.product);
+}
+
 /* ========== Intent-spec: action/content + lead magnets ========== */
 
 /* 1) Intent från användarens meddelande (generisk, ingen SEO/WordPress-special) */
@@ -427,6 +530,29 @@ const CONTENT_INTENT_PATTERNS = [
   /\bguide\b/i,
   /\bplaybook\b/i,
   /\bdownloadable\b/i,
+];
+
+const PRODUCT_INTENT_PATTERNS = [
+  // Svenska – generella produktfrågor
+  /\bprodukt(er|en)?\b/i,
+  /\bvara(n)?\b/i,
+  /\bartikel(n)?\b/i,
+  /\bmodell(en)?\b/i,
+  /\bvariant(en)?\b/i,
+  /\bpassar\b.*\b(till|för)\b/i,
+  /\bvilken\b.*\b(ska|bör|kan)\b.*(jag|vi)\s+(välja|ha)\b/i,
+
+  // Vanliga ord i dina shops, men fortfarande generiska
+  /\bdisplay\b/i,
+  /\bställ\b/i,
+  /\bhållare\b/i,
+  /\bstation\b/i,
+
+  // Engelska
+  /\bproduct(s)?\b/i,
+  /\bwhich\b.*\bproduct\b/i,
+  /\bwhich\b.*\bmodel\b/i,
+  /\brecommend(ed|ation)?\b/i,
 ];
 
 function hasIntent(lower, patterns) {
@@ -541,10 +667,11 @@ export default async function handler(req, res) {
     if (primaryPages.contact)  sitePagesPrompt += `- Kontakt / boka: ${primaryPages.contact}\n`;
 
     // Ladda sitemap & inlägg & LLMS (per site)
-    const [sitemapUrls, postUrls, llms] = await Promise.all([
+    const [sitemapUrls, postUrls, llms, products] = await Promise.all([
       loadSitemapUrls(siteId, siteBaseUrl, sitemapConfig, siteHost),
       loadPostUrls(siteId,  siteBaseUrl, sitemapConfig, siteHost),
       loadLLMSBundle(siteId, llmsConfig, siteBaseUrl),
+      loadProducts(siteId, siteBaseUrl),
     ]);
 
     const llmsContext = `
@@ -558,6 +685,46 @@ ${llms.fullPart}
 ${llms.svPart}
 `.trim();
 
+    // 🔹 Produktkandidater baserat på användarens fråga (helt generiskt)
+    const candidateProducts = rankProducts(message, products, 4);
+
+    let productContext = '';
+    if (candidateProducts.length) {
+      productContext = '[PRODUKTER – kandidatlista baserad på användarens fråga]\n';
+
+      for (let i = 0; i < candidateProducts.length; i++) {
+        const p = candidateProducts[i];
+
+        const name = p.name || 'Produkt';
+        const cats = Array.isArray(p.categories) && p.categories.length
+          ? ` (${p.categories
+            .map(c => c.name || c.slug || '')
+            .filter(Boolean)
+            .join(', ')})`
+          : '';
+
+        const price =
+          (typeof p.price === 'number' || typeof p.price === 'string')
+            ? String(p.price)
+            : '';
+
+        const url = p.permalink || p.url || p.link || null;
+
+        const rawDesc = p.short_description || p.description || '';
+        const summary = rawDesc
+          .replace(/<[^>]+>/g, ' ')   // ta bort HTML
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 220);
+
+        productContext += `${i + 1}. ${name}${cats}`;
+        if (price)      productContext += ` – pris: ${price}`;
+        if (url)        productContext += ` – länk: ${url}`;
+        if (summary)    productContext += ` – kort beskrivning: ${summary}`;
+        productContext += '\n';
+      }
+    }
+
     const system = {
       role: 'system',
       content: `
@@ -568,6 +735,26 @@ Mål:
 2) Hjälp användaren vidare med relevanta länkar till webbplatsen (om möjligt).
 3) När användaren uttrycker intresse (t.ex. pris, offert, boka, rådgivning, analys): föreslå att ta kontakt eller boka ett möte på ett naturligt sätt.
 4) Håll tonen professionell, vänlig och framåtblickande – på svenska.
+5) Produktlogik – generisk hybridrådgivare
+
+När du i sektionen [PRODUKTER – kandidatlista baserad på användarens fråga] får en eller flera produkter:
+
+- Utgå i första hand från dessa produkter när du ger rekommendationer.
+- Hitta aldrig på produktnamn, priser, funktioner, varianter eller egenskaper som inte finns i listan.
+- Länka alltid till produktens URL om en sådan finns.
+- Beskriv produkten kortfattat baserat på den information som finns, utan att anta detaljer som inte explicit framgår.
+
+Agera som en neutral, hjälpsam rådgivare:
+- Hjälp användaren att förstå vilka alternativ som är relevanta för deras behov.
+- Ställ förtydligande frågor när användaren är otydlig, t.ex. om användningsområde, storlek, funktionalitet eller preferenser.
+- Om flera produkter passar: presentera 1–3 tydliga rekommendationer och förklara skillnaderna på ett enkelt och objektivt sätt.
+
+Undvik försäljning:
+- Pressa aldrig användaren att köpa.
+- Ge råd och vägledning, inte försäljningsargument.
+- Fokusera på att hjälpa användaren fatta ett informerat beslut.
+
+Målet är att ge ett professionellt, vänligt och sakligt beslutsunderlag — inte att sälja aktivt.
 
 Webbplatsens viktiga sidor (använd dessa i första hand när du länkar):
 ${sitePagesPrompt || '- Ingen specifik sidkarta angiven, använd den mest relevanta sidan du hittar i LLMS / sitemap.'}
@@ -599,6 +786,8 @@ Primär kunskapsbas:
 - Använd innehållet från LLMS-källorna (llms/index/full/full_sv – se sammanfattning nedan) som prioriterad källa när du svarar om tjänster, produkter, artiklar eller guider.
 
 ${llmsContext}
+
+${productContext ? `\n${productContext}\n\nAnvänd ovanstående produkter när de är relevanta för användarens fråga. Hitta aldrig på produkter som inte finns i listan.` : ''}
 `.trim(),
     };
 
@@ -757,6 +946,74 @@ ${llmsContext}
       }
     }
 
+/* Produktintention → automatisk WooCommerce-rekommendation */
+let product_intent = hasIntent(lower, PRODUCT_INTENT_PATTERNS) && candidateProducts.length > 0;
+
+if (product_intent) {
+  const top = candidateProducts.slice(0, 3); // vi har redan rankat dem
+
+  if (top.length) {
+    let block = '\n\n🛒 Baserat på det du beskriver kan dessa produkter passa:\n';
+
+    for (const p of top) {
+      const url =
+        (p.url && typeof p.url === 'string' && p.url) ||
+        (p.permalink && typeof p.permalink === 'string' && p.permalink) ||
+        (p.link && typeof p.link === 'string' && p.link) ||
+        null;
+
+      if (!url) continue;
+
+      const name =
+        (p.name && typeof p.name === 'string' && p.name) ||
+        (p.title && typeof p.title === 'string' && p.title) ||
+        prettyFromSlug(url);
+
+      // Plocka ut lite meta – utan att anta exakt struktur
+      const extras = [];
+
+      if (typeof p.price_html === 'string' && p.price_html.trim()) {
+        const priceText = p.price_html.replace(/<[^>]+>/g, '').trim();
+        if (priceText) extras.push(priceText);
+      } else if (typeof p.price === 'string' && p.price.trim()) {
+        extras.push(p.price.trim());
+      }
+
+      if (typeof p.short_description === 'string' && p.short_description.trim()) {
+        const desc = p.short_description.replace(/<[^>]+>/g, '').trim();
+        if (desc) extras.push(desc);
+      }
+
+      if (Array.isArray(p.categories) && p.categories.length) {
+        const cats = p.categories
+          .map(c => c.name || c.slug || '')
+          .filter(Boolean)
+          .join(', ');
+        if (cats) extras.push(`Kategori: ${cats}`);
+      }
+
+      if (Array.isArray(p.tags) && p.tags.length) {
+        const tags = p.tags
+          .map(t => t.name || t.slug || '')
+          .filter(Boolean)
+          .join(', ');
+        if (tags) extras.push(`Taggar: ${tags}`);
+      }
+
+      let line = `- [${name}](${url})`;
+      if (extras.length) {
+        line += ` – ${extras.join(' · ')}`;
+      }
+
+      block += line + '\n';
+    }
+
+    reply += block;
+  } else {
+    product_intent = false;
+  }
+}
+
     /* ========== Lead-intent enligt specifikationen (per siteConfig) ========== */
 
     // 1) Magneter från siteConfig
@@ -856,13 +1113,24 @@ ${llmsContext}
       reply += `\n\n💰 Du hittar våra aktuella priser här: [Priser](${pricingUrl}).`;
     }
 
-    return res.status(200).json({
-      reply,
-      booking_intent,
-      lead_intent,
-      lead_key,
-      privacy_url,
-    });
+// Produkt-intent: lista med träffar som frontend kan logga/analysera
+const product_hits = candidateProducts.map(p => ({
+  id: p.id ?? null,
+  name: p.name ?? null,
+  url: p.permalink || p.url || p.link || null,
+  price: p.price ?? null,
+}));
+
+return res.status(200).json({
+  reply,
+  booking_intent,
+  lead_intent,
+  lead_key,
+  privacy_url,
+  product_intent,   // ← den från blocket ovan
+  product_hits,
+});
+
   } catch (err) {
     console.error('Chat error:', err);
     return res.status(500).json({ error: 'Server error' });
