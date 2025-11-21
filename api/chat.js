@@ -712,28 +712,23 @@ ${llms.svPart}
 
         let price = '';
 
-        // Vanligt Woo-fält om det skulle finnas
         if (typeof p.price === 'number' || typeof p.price === 'string') {
           price = String(p.price);
-        }
-        // Din egen struktur: price_from + currency (t.ex. 1295 + "SEK")
-        else if (typeof p.price_from === 'number' || typeof p.price_from === 'string') {
+        } else if (typeof p.price_from === 'number' || typeof p.price_from === 'string') {
           const c = typeof p.currency === 'string' ? p.currency : 'SEK';
           price = `från ${p.price_from} ${c}`;
         }
-
-        if (price)      productContext += ` – pris: ${price}`;
 
         const url = p.permalink || p.url || p.link || null;
 
         const rawDesc = p.short_description || p.description || '';
         const summary = rawDesc
-          .replace(/<[^>]+>/g, ' ')   // ta bort HTML
+          .replace(/<[^>]+>/g, ' ')
           .replace(/\s+/g, ' ')
           .trim()
           .slice(0, 220);
 
-        productContext += `${i + 1}. ${name}${cats}`;
+        productContext += `- ${name}${cats}`;
         if (price)      productContext += ` – pris: ${price}`;
         if (url)        productContext += ` – länk: ${url}`;
         if (summary)    productContext += ` – kort beskrivning: ${summary}`;
@@ -906,6 +901,10 @@ ${productContext ? `\n${productContext}\n\nAnvänd ovanstående produkter när d
 
     // Rensa tomma parenteser
     reply = reply.replace(/\(\s*\)/g, '');
+
+    // Tighta avståndet mellan prisrad och "Läs mer här"-länk
+    reply = reply.replace(/\n\n(-\s*Pris:)/gi, '\n$1');
+    reply = reply.replace(/\n\n(-\s*Läs mer här)/gi, '\n$1');
 
     /* Informationsintention → relaterade inlägg eller blogg */
     const infoTriggers = /(hur|varför|tips|guider|steg|förklara|förbättra|optimera|öka|bästa sättet|hur gör jag)/i;
